@@ -100,6 +100,6 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, green_thres
         style_as_list_view=True,
         style_table={"overflowX": "auto"},
         style_header={"backgroundColor": "#f0f4ef", "color": "#718078", "fontWeight": "700", "fontSize": "11px", "textTransform": "uppercase", "letterSpacing": "1px", "border": "0", "padding": "14px 12px"},
-        style_cell={"backgroundColor": "white", "color": "#17221b", "fontFamily": "DM Sans", "fontSize": "13px", "border": "0", "borderTop": "1px solid #edf1ed", "padding": "15px 12px", "textAlign": "left", "whiteSpace": "nowrap"},
+        style_cell={"backgroundColor": "white", "color": "#17221b", "fontFamily": "DM Sans", "fontSize": "13px", "border": "0", "borderTop": "1px solid #edf1ed", "padding": "8px 12px", "textAlign": "left", "whiteSpace": "nowrap"},
         style_data_conditional=conditional,
     )

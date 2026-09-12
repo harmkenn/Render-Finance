@@ -31,7 +31,7 @@ def sidebar() -> html.Aside:
         html.Button("☰  Settings", id="sidebar-toggle", className="sidebar-toggle"),
         html.Div([
             html.Label("APPLICATION", className="setting-label"),
-            dcc.Dropdown(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}], value="fishing", clearable=False, className="sidebar-control"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
             html.Label("MARKET VIEW", className="setting-label"),
             dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
             html.Label("REFRESH INTERVAL", className="setting-label"),

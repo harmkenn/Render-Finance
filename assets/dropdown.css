@@ -1,0 +1,27 @@
+.sidebar .Select-option {
+    color: var(--ink) !important;
+}
+
+.sidebar .Select-option.is-focused,
+.sidebar .Select-option:hover {
+    background: #e7efe9;
+    color: var(--ink) !important;
+}
+
+.sidebar-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    background: white;
+    color: var(--ink);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.sidebar-radio-input {
+    accent-color: var(--forest);
+    margin: 0;
+}
