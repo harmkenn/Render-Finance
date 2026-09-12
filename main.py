@@ -45,14 +45,12 @@ def sidebar() -> html.Aside:
             html.Span("% gain", className="setting-suffix"),
         ], id="sidebar-settings", className="sidebar-settings"),
         html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", className="source-name"), html.P("Top market gainers with live filters", className="target-note")], className="sidebar-target"),
-        html.Div([html.Div("JD", className="avatar"), html.Div([html.Strong("Jordan Davis"), html.Small("Research desk")])], className="profile"),
     ], id="sidebar", className="sidebar")
 
 
 app.layout = html.Div([
     sidebar(),
     html.Main([
-        html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow"), html.H1("Stock analysis, in focus.")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
         html.Div([html.Div([html.H2("Fishing"), html.P("Top market gainers, surfaced at the top of the app.", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
         html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
         html.Footer(" is a market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
