@@ -16,3 +16,5 @@ Open http://127.0.0.1:8050.
 ## Deploy on Render
 
 Create a new **Blueprint** in Render and select this repository. The included `render.yaml` configures the Python web service and its Gunicorn start command.
+
+If you created the service manually, set the Start Command to `gunicorn app:server --bind 0.0.0.0:$PORT`.
