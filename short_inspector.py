@@ -10,9 +10,6 @@ import pytz
 import yfinance as yf
 from dash import dcc, html
 
-DEFAULT_TICKERS = ["TQQQ", "UPRO", "UDOW", "^VIX", "SPHY"]
-
-
 def _number(value: object, default: float = 0.0) -> float:
     number = pd.to_numeric(value, errors="coerce")
     return default if pd.isna(number) else float(number)
@@ -142,10 +139,10 @@ def _value(label: str, value: str) -> html.Div:
     return html.Div([html.Div(label, className="inspector-label"), html.Div(value, className="inspector-value")], className="inspector-metric")
 
 
-def inspector_layout() -> html.Div:
+def inspector_layout(tickers: list[str]) -> html.Div:
     return html.Div([
         html.Div([html.H2("Single-Ticker Parabolic Short Inspector"), html.P("Evaluate parabolic single-day spikes, VWAP extension, borrow risk, and fundamental stress.", className="intro-copy")], className="section-header"),
-        html.Div([dcc.Dropdown(id="inspector-ticker", options=[{"label": ticker, "value": ticker} for ticker in DEFAULT_TICKERS], value=DEFAULT_TICKERS[0], clearable=False, className="inspector-ticker"), html.Button("Analyze stock", id="inspector-analyze", className="add-button")], className="inspector-controls"),
+        html.Div([dcc.Dropdown(id="inspector-ticker", options=[{"label": ticker, "value": ticker} for ticker in tickers], value=tickers[0], clearable=False, className="inspector-ticker"), html.Button("Analyze stock", id="inspector-analyze", className="add-button")], className="inspector-controls"),
         html.Div(id="inspector-status", className="status-message"),
         html.Div(id="inspector-metrics", className="inspector-grid"),
         html.Div(id="inspector-summary", className="inspector-summary"),

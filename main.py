@@ -6,11 +6,22 @@ from zoneinfo import ZoneInfo
 from dash import Dash, Input, Output, State, dcc, html
 
 from fishing import PAGES, build_table, scrape_stock_top10
+from intraday import intraday_layout, render_intraday, render_sidebar_range
 from short_inspector import inspector_layout, render_inspector
 
 DEFAULT_REFRESH_SECONDS = 30
 DEFAULT_YELLOW_THRESHOLD = 100.0
 DEFAULT_GREEN_THRESHOLD = 150.0
+DEFAULT_TICKERS = ["TQQQ", "UPRO", "UDOW", "^VIX", "BNO"]
+
+
+def parse_tickers(raw_tickers: str | None) -> list[str]:
+    tickers = []
+    for ticker in (raw_tickers or "").replace("\n", ",").split(","):
+        cleaned = ticker.strip().upper()
+        if cleaned and cleaned not in tickers:
+            tickers.append(cleaned)
+    return tickers or DEFAULT_TICKERS.copy()
 
 
 def get_default_page() -> str:
@@ -35,22 +46,25 @@ def sidebar() -> html.Aside:
         html.Button("☰  Settings", id="sidebar-toggle", className="sidebar-toggle"),
         html.Div([
             html.Label("INSPECTOR TICKERS", className="setting-label"),
-            dcc.Textarea(id="inspector-tickers", value="TQQQ, UPRO, UDOW, ^VIX, SPHY", placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
+            dcc.Textarea(id="inspector-tickers", value=", ".join(DEFAULT_TICKERS), placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
             html.Span("comma separated", className="setting-suffix"),
             html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
-            html.Label("MARKET VIEW", className="setting-label"),
-            dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
-            html.Label("REFRESH INTERVAL", className="setting-label"),
-            dcc.Input(id="refresh-seconds", type="number", min=10, max=600, step=5, value=DEFAULT_REFRESH_SECONDS, className="sidebar-input"),
-            html.Span("seconds", className="setting-suffix"),
-            html.Label("YELLOW THRESHOLD", className="setting-label"),
-            dcc.Input(id="yellow-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_YELLOW_THRESHOLD, className="sidebar-input"),
-            html.Span("% gain", className="setting-suffix"),
-            html.Label("GREEN THRESHOLD", className="setting-label"),
-            dcc.Input(id="green-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_GREEN_THRESHOLD, className="sidebar-input"),
-            html.Span("% gain", className="setting-suffix"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
+            html.Div([
+                html.Label("MARKET VIEW", className="setting-label"),
+                dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
+                html.Label("REFRESH INTERVAL", className="setting-label"),
+                dcc.Input(id="refresh-seconds", type="number", min=10, max=600, step=5, value=DEFAULT_REFRESH_SECONDS, className="sidebar-input"),
+                html.Span("seconds", className="setting-suffix"),
+                html.Label("YELLOW THRESHOLD", className="setting-label"),
+                dcc.Input(id="yellow-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_YELLOW_THRESHOLD, className="sidebar-input"),
+                html.Span("% gain", className="setting-suffix"),
+                html.Label("GREEN THRESHOLD", className="setting-label"),
+                dcc.Input(id="green-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_GREEN_THRESHOLD, className="sidebar-input"),
+                html.Span("% gain", className="setting-suffix"),
+            ], id="fishing-settings"),
         ], id="sidebar-settings", className="sidebar-settings"),
+        html.Div([html.P("CURRENT PRICES & 60-DAY RANGE", className="eyebrow"), html.Div(id="intraday-sidebar-range")], id="intraday-sidebar-panel", className="intraday-sidebar-panel", style={"display": "none"}),
         html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", id="sidebar-app-name", className="source-name"), html.P("Top market gainers with live filters", className="target-note")], className="sidebar-target"),
     ], id="sidebar", className="sidebar")
 
@@ -66,7 +80,8 @@ app.layout = html.Div([
             dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
             dcc.Store(id="refresh-counter", data=0),
         ], id="fishing-content"),
-        inspector_layout(),
+        inspector_layout(DEFAULT_TICKERS),
+        intraday_layout(DEFAULT_TICKERS),
     ], id="main-content", className="main-content"),
 ], className="app-shell")
 
@@ -81,34 +96,38 @@ def toggle_sidebar(_clicks: int | None, class_name: str) -> str:
 @app.callback(
     Output("fishing-content", "style"),
     Output("inspector-content", "style"),
+    Output("intraday-content", "style"),
     Output("sidebar-app-name", "children"),
+    Output("fishing-settings", "style"),
+    Output("intraday-sidebar-panel", "style"),
     Input("app-select", "value"),
 )
 def switch_app(app_name: str):
     inspector_active = app_name == "inspector"
+    intraday_active = app_name == "intraday"
     return (
-        {"display": "none"} if inspector_active else {},
+        {"display": "none"} if inspector_active or intraday_active else {},
         {} if inspector_active else {"display": "none"},
-        "Parabolic Inspector" if inspector_active else "Fishing",
+        {} if intraday_active else {"display": "none"},
+        "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
+        {"display": "none"} if inspector_active or intraday_active else {},
+        {} if intraday_active else {"display": "none"},
     )
 
 
 @app.callback(
     Output("inspector-ticker", "options"),
     Output("inspector-ticker", "value"),
+    Output("intraday-ticker", "options"),
+    Output("intraday-ticker", "value"),
     Input("inspector-tickers", "value"),
     State("inspector-ticker", "value"),
 )
 def update_inspector_tickers(raw_tickers: str | None, current_ticker: str | None):
-    tickers = []
-    for ticker in (raw_tickers or "").replace("\n", ",").split(","):
-        cleaned = ticker.strip().upper()
-        if cleaned and cleaned not in tickers:
-            tickers.append(cleaned)
-    if not tickers:
-        tickers = ["TQQQ", "UPRO", "UDOW", "^VIX", "SPHY"]
+    tickers = parse_tickers(raw_tickers)
     value = current_ticker if current_ticker in tickers else tickers[0]
-    return [{"label": ticker, "value": ticker} for ticker in tickers], value
+    options = [{"label": ticker, "value": ticker} for ticker in tickers]
+    return options, value, options, value
 
 
 @app.callback(
@@ -122,6 +141,32 @@ def update_inspector_tickers(raw_tickers: str | None, current_ticker: str | None
 )
 def update_inspector(_clicks: int | None, symbol: str):
     return render_inspector(symbol)
+
+
+@app.callback(
+    Output("intraday-status", "children"),
+    Output("intraday-metrics", "children"),
+    Output("intraday-stats", "children"),
+    Output("intraday-price", "figure"),
+    Output("intraday-volume", "figure"),
+    Output("intraday-data", "children"),
+    Input("intraday-refresh", "n_clicks"),
+    Input("intraday-ticker", "value"),
+)
+def update_intraday(_clicks: int | None, symbol: str):
+    return render_intraday(symbol, _clicks)
+
+
+@app.callback(
+    Output("intraday-sidebar-range", "children"),
+    Input("app-select", "value"),
+    Input("inspector-tickers", "value"),
+    Input("intraday-refresh", "n_clicks"),
+)
+def update_intraday_sidebar(app_name: str, raw_tickers: str | None, _refresh: int | None):
+    if app_name != "intraday":
+        return []
+    return render_sidebar_range(parse_tickers(raw_tickers))
 
 
 @app.callback(Output("auto-refresh", "interval"), Input("refresh-seconds", "value"))
