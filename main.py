@@ -134,6 +134,7 @@ def update_inspector_tickers(raw_tickers: str | None, current_ticker: str | None
     Output("inspector-status", "children"),
     Output("inspector-metrics", "children"),
     Output("inspector-chart", "figure"),
+    Output("inspector-summary", "children"),
     Output("inspector-technical", "children"),
     Output("inspector-fundamentals", "children"),
     Input("inspector-analyze", "n_clicks"),

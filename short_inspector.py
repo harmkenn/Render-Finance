@@ -116,27 +116,73 @@ def estimate_borrow_status(data: dict) -> tuple[str, str]:
 
 def calculate_short_score(data: dict) -> dict:
     score = 0
-    if data["gain_24h"] >= 1.5: score += 35
-    elif data["gain_24h"] >= 1: score += 25
-    elif data["gain_24h"] >= .5: score += 10
-    else: score -= 20
-    if data["rvol"] >= 15: score += 20
-    elif data["rvol"] >= 5: score += 10
+    boosters = []
+    penalties = []
+    if data["gain_24h"] >= 1.5:
+        score += 35
+        boosters.append((35, "Price gain is at least 150%."))
+    elif data["gain_24h"] >= 1:
+        score += 25
+        boosters.append((25, "Price gain is at least 100%."))
+    elif data["gain_24h"] >= .5:
+        score += 10
+        boosters.append((10, "Price gain is at least 50%."))
+    else:
+        score -= 20
+        penalties.append((-20, "Price gain is below 50%."))
+    if data["rvol"] >= 15:
+        score += 20
+        boosters.append((20, "Relative volume is at least 15x."))
+    elif data["rvol"] >= 5:
+        score += 10
+        boosters.append((10, "Relative volume is at least 5x."))
     vwap_diff = (data["price"] - data["vwap"]) / data["vwap"] * 100 if data["vwap"] else 0
-    score += 25 if vwap_diff >= 15 else 15 if data["price"] > data["vwap"] else -15
-    if 0 < data["float_shares"] <= 10_000_000: score += 10
-    if data["z_score"] is not None and data["z_score"] < 1.8: score += 10
-    if data["cash_runway_months"] is not None and data["cash_runway_months"] < 6: score += 10
-    if data["f_score"] is not None and data["f_score"] <= 2: score += 10
-    if data["drop_from_high"] <= .05: score -= 30
-    if data["ctb_estimated"] and data["ctb_estimated"] > 50: score -= 15
+    if vwap_diff >= 15:
+        score += 25
+        boosters.append((25, "Price is at least 15% above VWAP."))
+    elif data["price"] > data["vwap"]:
+        score += 15
+        boosters.append((15, "Price is above VWAP."))
+    else:
+        score -= 15
+        penalties.append((-15, "Price is at or below VWAP."))
+    if 0 < data["float_shares"] <= 10_000_000:
+        score += 10
+        boosters.append((10, "Float is 10 million shares or less."))
+    if data["z_score"] is not None and data["z_score"] < 1.8:
+        score += 10
+        boosters.append((10, "Altman Z-Score is below 1.8."))
+    if data["cash_runway_months"] is not None and data["cash_runway_months"] < 6:
+        score += 10
+        boosters.append((10, "Cash runway is below six months."))
+    if data["f_score"] is not None and data["f_score"] <= 2:
+        score += 10
+        boosters.append((10, "Piotroski F-Score is 2 or lower."))
+    if data["drop_from_high"] <= .05:
+        score -= 30
+        penalties.append((-30, "Price is still within 5% of the day high."))
+    if data["ctb_estimated"] and data["ctb_estimated"] > 50:
+        score -= 15
+        penalties.append((-15, "Estimated borrow cost is above 50% APY."))
     final_score = max(0, min(100, score))
     status = "TRIGGER" if final_score >= 75 and data["price"] > data["vwap"] else "ARMED" if final_score >= 55 else "CANDIDATE"
-    return {"score": final_score, "status": status, "vwap_diff": vwap_diff, "message": "Extended above VWAP. Review the fade location and borrow risk." if status == "TRIGGER" else "Monitor price action and confirmation above VWAP." if status == "ARMED" else "Lacks a strong extension or has already broken down."}
+    return {"score": final_score, "status": status, "vwap_diff": vwap_diff, "boosters": boosters, "penalties": penalties, "message": "Extended above VWAP. Review the fade location and borrow risk." if status == "TRIGGER" else "Monitor price action and confirmation above VWAP." if status == "ARMED" else "Lacks a strong extension or has already broken down."}
 
 
 def _value(label: str, value: str) -> html.Div:
     return html.Div([html.Div(label, className="inspector-label"), html.Div(value, className="inspector-value")], className="inspector-metric")
+
+
+def _score_points(title: str, points: list[tuple[int, str]], empty_message: str, class_name: str) -> html.Div:
+    items = [html.Li([html.Strong(f"{points_value:+d}"), f": {description}"]) for points_value, description in points]
+    return html.Div([html.H3(title), html.Ul(items or [html.Li(empty_message)])], className=f"score-breakdown-column {class_name}")
+
+
+def score_breakdown(score: dict) -> html.Div:
+    return html.Div([
+        _score_points("Positive Exhaustion Points", score["boosters"], "No positive setup points triggered.", "score-boosters"),
+        _score_points("Warning Penalties", score["penalties"], "No active warning penalties.", "score-penalties"),
+    ], className="score-breakdown")
 
 
 def inspector_layout(tickers: list[str]) -> html.Div:
@@ -154,7 +200,7 @@ def inspector_layout(tickers: list[str]) -> html.Div:
 
 def render_inspector(symbol: str):
     data = fetch_stock_data((symbol or "TQQQ").strip().upper())
-    if not data: return "Could not retrieve data for this ticker.", [], {}, [], []
+    if not data: return "Could not retrieve data for this ticker.", [], {}, [], [], html.Div()
     score = calculate_short_score(data)
     borrow, borrow_reason = estimate_borrow_status(data)
     metrics = [_value("Short score", f"{score['score']}/100"), _value("Signal state", score["status"]), _value("Current price", f"${data['price']:.2f} ({data['gain_24h'] * 100:+.1f}%)"), _value("Borrow outlook", borrow)]
@@ -175,4 +221,4 @@ def render_inspector(symbol: str):
     figure.update_layout(template="plotly_dark", height=450, margin={"l": 20, "r": 20, "t": 30, "b": 20}, hovermode="x unified", xaxis_title="Date/Time (US/Eastern)", yaxis_title="Stock Price ($)")
     technical = [_value("Day high", f"${data['day_high']:.2f}"), _value("Previous close", f"${data['prev_close']:.2f}"), _value("Drop from high", f"{data['drop_from_high'] * 100:.1f}%"), _value("Today VWAP", f"${data['vwap']:.2f} ({score['vwap_diff']:+.1f}%)"), _value("RVOL proxy", f"{data['rvol']:.1f}x"), _value("Float size", f"{data['float_shares'] / 1e6:.1f}M" if data['float_shares'] else "N/A"), _value("Borrow note", borrow_reason)]
     fundamentals = [_value("Altman Z-Score", f"{data['z_score']:.2f}" if data['z_score'] is not None else "N/A"), _value("Piotroski F-Score", f"{data['f_score']}/9" if data['f_score'] is not None else "N/A"), _value("Cash runway", f"{data['cash_runway_months']:.1f} months" if data['cash_runway_months'] is not None else "N/A"), _value("Monthly cash burn", f"${data['cash_burn_monthly'] / 1e6:.2f}M" if data['cash_burn_monthly'] else "N/A"), _value("Estimated CTB", f"{data['ctb_estimated']:.1f}% APY" if data['ctb_estimated'] is not None else "N/A"), _value("Share dilution", f"{data['share_growth_yoy']:+.1f}% YoY" if data['share_growth_yoy'] is not None else "N/A")]
-    return f"{symbol.upper()} · {score['message']}", metrics, figure, technical, fundamentals
+    return f"{symbol.upper()} · {score['message']}", metrics, figure, score_breakdown(score), technical, fundamentals
