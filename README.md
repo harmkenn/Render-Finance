@@ -1,6 +1,6 @@
 # Luma Market Tracker
 
-A responsive Plotly Dash stock tracker matching the Streamlit workflow: it fetches Premarket Movers or Top Daily Gainers from StockAnalysis, filters out low-price and low-volume rows, highlights large gainers, and refreshes automatically.
+A modular Plotly Dash market tracker. `main.py` owns the collapsible settings sidebar and app frame; `fishing.py` is the first sub application and fetches Premarket Movers or Top Daily Gainers from StockAnalysis.
 
 ## Run locally
 
@@ -19,4 +19,4 @@ The live source is fetched when the page loads and every configured refresh inte
 
 Create a new **Blueprint** in Render and select this repository. The included `render.yaml` configures the Python web service and its Gunicorn start command.
 
-If you created the service manually, set the Start Command to `gunicorn app:server --bind 0.0.0.0:$PORT`.
+If you created the service manually, set the Start Command to `gunicorn main:server --bind 0.0.0.0:$PORT`.
