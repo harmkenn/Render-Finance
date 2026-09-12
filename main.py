@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from dash import Dash, Input, Output, State, dcc, html
 
 from fishing import PAGES, build_table, scrape_stock_top10
+from short_inspector import inspector_layout, render_inspector
 
 DEFAULT_REFRESH_SECONDS = 30
 DEFAULT_YELLOW_THRESHOLD = 100.0
@@ -27,11 +28,17 @@ server = app.server
 
 def sidebar() -> html.Aside:
     return html.Aside([
-        html.Div("MARKET INTELLIGENCE", className="eyebrow sidebar-eyebrow"),
+        html.Div([
+            html.Div("MARKET INTELLIGENCE", className="eyebrow sidebar-eyebrow"),
+            html.Div("by Ken Harmon", className="sidebar-credit"),
+        ]),
         html.Button("☰  Settings", id="sidebar-toggle", className="sidebar-toggle"),
         html.Div([
+            html.Label("INSPECTOR TICKERS", className="setting-label"),
+            dcc.Textarea(id="inspector-tickers", value="TQQQ, UPRO, UDOW, ^VIX, SPHY", placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
+            html.Span("comma separated", className="setting-suffix"),
             html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
             html.Label("MARKET VIEW", className="setting-label"),
             dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
             html.Label("REFRESH INTERVAL", className="setting-label"),
@@ -44,18 +51,22 @@ def sidebar() -> html.Aside:
             dcc.Input(id="green-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_GREEN_THRESHOLD, className="sidebar-input"),
             html.Span("% gain", className="setting-suffix"),
         ], id="sidebar-settings", className="sidebar-settings"),
-        html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", className="source-name"), html.P("Top market gainers with live filters", className="target-note")], className="sidebar-target"),
+        html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", id="sidebar-app-name", className="source-name"), html.P("Top market gainers with live filters", className="target-note")], className="sidebar-target"),
     ], id="sidebar", className="sidebar")
 
 
 app.layout = html.Div([
     sidebar(),
     html.Main([
-        html.Div([html.Div([html.H2("Fishing"), html.P("Top market gainers, surfaced at the top of the app.", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
-        html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
-        html.Footer(" is a market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
-        dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
-        dcc.Store(id="refresh-counter", data=0),
+        html.Div([
+            html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
+            html.Div([html.Div([html.H2("Fishing"), html.P("Top market gainers, surfaced at the top of the app.", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
+            html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
+            html.Footer(" is a market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
+            dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
+            dcc.Store(id="refresh-counter", data=0),
+        ], id="fishing-content"),
+        inspector_layout(),
     ], id="main-content", className="main-content"),
 ], className="app-shell")
 
@@ -65,6 +76,52 @@ def toggle_sidebar(_clicks: int | None, class_name: str) -> str:
     if not _clicks:
         return class_name
     return "sidebar collapsed" if "collapsed" not in class_name else "sidebar"
+
+
+@app.callback(
+    Output("fishing-content", "style"),
+    Output("inspector-content", "style"),
+    Output("sidebar-app-name", "children"),
+    Input("app-select", "value"),
+)
+def switch_app(app_name: str):
+    inspector_active = app_name == "inspector"
+    return (
+        {"display": "none"} if inspector_active else {},
+        {} if inspector_active else {"display": "none"},
+        "Parabolic Inspector" if inspector_active else "Fishing",
+    )
+
+
+@app.callback(
+    Output("inspector-ticker", "options"),
+    Output("inspector-ticker", "value"),
+    Input("inspector-tickers", "value"),
+    State("inspector-ticker", "value"),
+)
+def update_inspector_tickers(raw_tickers: str | None, current_ticker: str | None):
+    tickers = []
+    for ticker in (raw_tickers or "").replace("\n", ",").split(","):
+        cleaned = ticker.strip().upper()
+        if cleaned and cleaned not in tickers:
+            tickers.append(cleaned)
+    if not tickers:
+        tickers = ["TQQQ", "UPRO", "UDOW", "^VIX", "SPHY"]
+    value = current_ticker if current_ticker in tickers else tickers[0]
+    return [{"label": ticker, "value": ticker} for ticker in tickers], value
+
+
+@app.callback(
+    Output("inspector-status", "children"),
+    Output("inspector-metrics", "children"),
+    Output("inspector-chart", "figure"),
+    Output("inspector-technical", "children"),
+    Output("inspector-fundamentals", "children"),
+    Input("inspector-analyze", "n_clicks"),
+    State("inspector-ticker", "value"),
+)
+def update_inspector(_clicks: int | None, symbol: str):
+    return render_inspector(symbol)
 
 
 @app.callback(Output("auto-refresh", "interval"), Input("refresh-seconds", "value"))
