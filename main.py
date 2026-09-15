@@ -11,7 +11,8 @@ from short_inspector import inspector_layout, render_inspector
 
 DEFAULT_REFRESH_SECONDS = 30
 DEFAULT_YELLOW_THRESHOLD = 100.0
-DEFAULT_GREEN_THRESHOLD = 150.0
+DEFAULT_ORANGE_THRESHOLD = 150.0
+DEFAULT_RED_THRESHOLD = 200.0
 DEFAULT_TICKERS = ["TQQQ", "UPRO", "UDOW", "^VIX", "BNO"]
 
 
@@ -59,8 +60,11 @@ def sidebar() -> html.Aside:
                 html.Label("YELLOW THRESHOLD", className="setting-label"),
                 dcc.Input(id="yellow-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_YELLOW_THRESHOLD, className="sidebar-input"),
                 html.Span("% gain", className="setting-suffix"),
-                html.Label("GREEN THRESHOLD", className="setting-label"),
-                dcc.Input(id="green-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_GREEN_THRESHOLD, className="sidebar-input"),
+                html.Label("ORANGE THRESHOLD", className="setting-label"),
+                dcc.Input(id="orange-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_ORANGE_THRESHOLD, className="sidebar-input"),
+                html.Span("% gain", className="setting-suffix"),
+                html.Label("RED THRESHOLD", className="setting-label"),
+                dcc.Input(id="red-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_RED_THRESHOLD, className="sidebar-input"),
                 html.Span("% gain", className="setting-suffix"),
             ], id="fishing-settings"),
         ], id="sidebar-settings", className="sidebar-settings"),
@@ -177,18 +181,19 @@ def update_refresh_interval(seconds: int | None) -> int:
 
 @app.callback(
     Output("refresh-summary", "children"), Output("table-heading", "children"), Output("status-message", "children"), Output("stock-table", "children"), Output("refresh-counter", "data"),
-    Input("page-select", "value"), Input("auto-refresh", "n_intervals"), Input("manual-refresh", "n_clicks"), Input("yellow-threshold", "value"), Input("green-threshold", "value"), State("refresh-counter", "data"), State("refresh-seconds", "value"),
+    Input("page-select", "value"), Input("auto-refresh", "n_intervals"), Input("manual-refresh", "n_clicks"), Input("yellow-threshold", "value"), Input("orange-threshold", "value"), Input("red-threshold", "value"), State("refresh-counter", "data"), State("refresh-seconds", "value"),
 )
-def update_fishing(page_name: str, _intervals: int, _manual_clicks: int | None, yellow_threshold: float | None, green_threshold: float | None, refresh_counter: int | None, refresh_seconds: int | None):
+def update_fishing(page_name: str, _intervals: int, _manual_clicks: int | None, yellow_threshold: float | None, orange_threshold: float | None, red_threshold: float | None, refresh_counter: int | None, refresh_seconds: int | None):
     yellow = float(yellow_threshold if yellow_threshold is not None else DEFAULT_YELLOW_THRESHOLD)
-    green = max(float(green_threshold if green_threshold is not None else DEFAULT_GREEN_THRESHOLD), yellow)
+    orange = max(float(orange_threshold if orange_threshold is not None else DEFAULT_ORANGE_THRESHOLD), yellow)
+    red = max(float(red_threshold if red_threshold is not None else DEFAULT_RED_THRESHOLD), orange)
     frame, error = scrape_stock_top10(PAGES.get(page_name, PAGES[get_default_page()]))
     count = 0 if frame is None else len(frame)
     counter = int(refresh_counter or 0) + 1
     seconds = max(10, min(int(refresh_seconds or DEFAULT_REFRESH_SECONDS), 600))
     now = datetime.now().astimezone().strftime("%b %d, %Y at %H:%M:%S %Z")
     status = error or f"Showing {count} qualifying stocks"
-    table = build_table(frame, yellow, green) if frame is not None else html.Div(error, className="error-state")
+    table = build_table(frame, yellow, orange, red) if frame is not None else html.Div(error, className="error-state")
     return f"{page_name} · Updated {now} · Every {seconds} sec · Refresh #{counter}", f"Top 10: {page_name}", status, table, counter
 
 

@@ -65,7 +65,7 @@ def _change_column(frame: pd.DataFrame) -> object | None:
     return next((column for column in frame.columns if "%" in str(column) or "change" in str(column).lower()), None)
 
 
-def build_table(frame: pd.DataFrame | None, yellow_threshold: float, green_threshold: float) -> html.Div | dash_table.DataTable:
+def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_threshold: float, red_threshold: float) -> html.Div | dash_table.DataTable:
     if frame is None or frame.empty:
         return html.Div("No stocks matched the current filters.", className="empty-state")
     symbol_column = next((column for column in frame.columns if "symbol" in str(column).lower() or "ticker" in str(column).lower()), frame.columns[0])
@@ -88,9 +88,18 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, green_thres
                 value = float(str(row[change_column]).replace("%", "").replace("+", "").replace(",", "").strip())
             except (TypeError, ValueError):
                 continue
-            color = "#23513e" if value >= green_threshold else "#f4d03f" if value >= yellow_threshold else None
-            if color:
-                conditional.append({"if": {"row_index": frame.index.get_loc(index)}, "backgroundColor": color, "color": "white" if color == "#23513e" else "#17221b", "fontWeight": "600"})
+            if value >= red_threshold:
+                color = "#b22222"
+                text_color = "white"
+            elif value >= orange_threshold:
+                color = "#ff7f0e"
+                text_color = "white"
+            elif value >= yellow_threshold:
+                color = "#f4d03f"
+                text_color = "#17221b"
+            else:
+                continue
+            conditional.append({"if": {"row_index": frame.index.get_loc(index)}, "backgroundColor": color, "color": text_color, "fontWeight": "600"})
     return dash_table.DataTable(
         data=data,
         columns=columns,
