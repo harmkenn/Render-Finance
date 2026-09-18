@@ -178,11 +178,56 @@ def _score_points(title: str, points: list[tuple[int, str]], empty_message: str,
     return html.Div([html.H3(title), html.Ul(items or [html.Li(empty_message)])], className=f"score-breakdown-column {class_name}")
 
 
-def score_breakdown(score: dict) -> html.Div:
+def _criteria_status(value: object | None, predicate: bool) -> tuple[str, str]:
+    if value is None:
+        return "—", "unknown"
+    return ("✓ Match", "match") if predicate else ("× No", "no")
+
+
+def score_breakdown(score: dict, data: dict) -> html.Div:
+    rows = [
+        ("Altman Z-Score", "< 1.8 (Distress)", data.get("z_score"), data.get("z_score") is not None and data.get("z_score") < 1.8),
+        ("Piotroski F-Score", "0 - 2 (Weak)", data.get("f_score"), data.get("f_score") is not None and data.get("f_score") <= 2),
+        ("Cash Runway", "< 6 Months", data.get("cash_runway_months"), data.get("cash_runway_months") is not None and data.get("cash_runway_months") < 6),
+        ("Cost to Borrow (CTB)", "< 20% APY", data.get("ctb_estimated"), data.get("ctb_estimated") is not None and data.get("ctb_estimated") < 20),
+        ("Shares Growth YoY", "> 20% (Active Dilution)", data.get("share_growth_yoy"), data.get("share_growth_yoy") is not None and data.get("share_growth_yoy") > 20),
+        ("Short Interest / Float", "< 15% (Low Squeeze)", data.get("short_pct_float"), data.get("short_pct_float") is not None and data.get("short_pct_float") < 0.15),
+    ]
+    table_rows = []
+    for metric, target, value, predicate in rows:
+        status_text, status_class = _criteria_status(value, predicate)
+        value_text = "N/A" if value is None else f"{value:.2f}" if isinstance(value, float) else str(value)
+        if metric == "Cash Runway":
+            value_text = "N/A" if value is None else f"{value:.1f} months"
+        elif metric == "Cost to Borrow (CTB)":
+            value_text = "N/A" if value is None else f"{value:.1f}% APY"
+        elif metric == "Shares Growth YoY":
+            value_text = "N/A" if value is None else f"{value:+.1f}%"
+        elif metric == "Short Interest / Float":
+            value_text = "N/A" if value is None else f"{value * 100:.1f}%"
+        table_rows.append(html.Tr([
+            html.Td(metric, className="criteria-metric"),
+            html.Td(target, className="criteria-target"),
+            html.Td(status_text, className=f"criteria-status {status_class}"),
+        ], className="criteria-row"))
     return html.Div([
-        _score_points("Positive Exhaustion Points", score["boosters"], "No positive setup points triggered.", "score-boosters"),
-        _score_points("Warning Penalties", score["penalties"], "No active warning penalties.", "score-penalties"),
-    ], className="score-breakdown")
+        html.Div([
+            html.Div("▣", className="criteria-icon"),
+            html.H3("Short Candidate Target Criteria"),
+        ], className="criteria-header"),
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("Metric"),
+                html.Th("Target Signal"),
+                html.Th("Status"),
+            ])),
+            html.Tbody(table_rows),
+        ], className="criteria-table"),
+        html.Div([
+            _score_points("Positive Exhaustion Points", score["boosters"], "No positive setup points triggered.", "score-boosters"),
+            _score_points("Warning Penalties", score["penalties"], "No active warning penalties.", "score-penalties"),
+        ], className="score-breakdown"),
+    ], className="criteria-panel")
 
 
 def inspector_layout(tickers: list[str]) -> html.Div:
@@ -221,4 +266,4 @@ def render_inspector(symbol: str):
     figure.update_layout(template="plotly_dark", height=450, margin={"l": 20, "r": 20, "t": 30, "b": 20}, hovermode="x unified", xaxis_title="Date/Time (US/Eastern)", yaxis_title="Stock Price ($)")
     technical = [_value("Day high", f"${data['day_high']:.2f}"), _value("Previous close", f"${data['prev_close']:.2f}"), _value("Drop from high", f"{data['drop_from_high'] * 100:.1f}%"), _value("Today VWAP", f"${data['vwap']:.2f} ({score['vwap_diff']:+.1f}%)"), _value("RVOL proxy", f"{data['rvol']:.1f}x"), _value("Float size", f"{data['float_shares'] / 1e6:.1f}M" if data['float_shares'] else "N/A"), _value("Borrow note", borrow_reason)]
     fundamentals = [_value("Altman Z-Score", f"{data['z_score']:.2f}" if data['z_score'] is not None else "N/A"), _value("Piotroski F-Score", f"{data['f_score']}/9" if data['f_score'] is not None else "N/A"), _value("Cash runway", f"{data['cash_runway_months']:.1f} months" if data['cash_runway_months'] is not None else "N/A"), _value("Monthly cash burn", f"${data['cash_burn_monthly'] / 1e6:.2f}M" if data['cash_burn_monthly'] else "N/A"), _value("Estimated CTB", f"{data['ctb_estimated']:.1f}% APY" if data['ctb_estimated'] is not None else "N/A"), _value("Share dilution", f"{data['share_growth_yoy']:+.1f}% YoY" if data['share_growth_yoy'] is not None else "N/A")]
-    return f"{symbol.upper()} · {score['message']}", metrics, figure, score_breakdown(score), technical, fundamentals
+    return f"{symbol.upper()} · {score['message']}", metrics, figure, score_breakdown(score, data), technical, fundamentals

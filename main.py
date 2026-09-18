@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from dash import Dash, Input, Output, State, dcc, html
 
 from fishing import PAGES, build_table, scrape_stock_top10
-from intraday import intraday_layout, render_intraday, render_sidebar_range
+from intraday import clear_caches, intraday_layout, render_intraday, render_sidebar_range
 from short_inspector import inspector_layout, render_inspector
 
 DEFAULT_REFRESH_SECONDS = 30
@@ -25,13 +25,19 @@ def parse_tickers(raw_tickers: str | None) -> list[str]:
     return tickers or DEFAULT_TICKERS.copy()
 
 
-def get_default_page() -> str:
-    now = datetime.now(ZoneInfo("America/New_York"))
-    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=20, minute=0, second=0, microsecond=0)
-    if now.weekday() < 5 and market_open <= now < market_close:
+def get_default_page_for(now: datetime) -> str:
+    if now.weekday() >= 5:
         return "Top Daily Gainers"
-    return "Premarket Movers"
+
+    premarket_start = now.replace(hour=4, minute=0, second=0, microsecond=0)
+    premarket_end = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    if premarket_start <= now < premarket_end:
+        return "Premarket Movers"
+    return "Top Daily Gainers"
+
+
+def get_default_page() -> str:
+    return get_default_page_for(datetime.now(ZoneInfo("America/New_York")))
 
 
 app = Dash(__name__, title="Market Intelligence")
@@ -167,11 +173,17 @@ def update_intraday(_clicks: int | None, symbol: str):
     Input("app-select", "value"),
     Input("inspector-tickers", "value"),
     Input("intraday-refresh", "n_clicks"),
+    Input("intraday-ticker", "value"),
 )
-def update_intraday_sidebar(app_name: str, raw_tickers: str | None, _refresh: int | None):
+def update_intraday_sidebar(app_name: str, raw_tickers: str | None, _refresh: int | None, selected_ticker: str | None):
     if app_name != "intraday":
         return []
-    return render_sidebar_range(parse_tickers(raw_tickers))
+    if _refresh is not None:
+        clear_caches()
+    tickers = parse_tickers(raw_tickers)
+    if selected_ticker and selected_ticker not in tickers:
+        tickers = [selected_ticker] + tickers
+    return render_sidebar_range(tickers)
 
 
 @app.callback(Output("auto-refresh", "interval"), Input("refresh-seconds", "value"))
