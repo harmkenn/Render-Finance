@@ -254,4 +254,47 @@ app.layout = html.Div([
         dcc.Dropdown(
             id="market-target-dropdown",
             options=[
-                {"label": "Auto (Time Based)", "value": "Auto
+                {"label": "Auto (Time Based)", "value": "Auto"},
+                {"label": "Premarket Movers", "value": "Premarket Movers"},
+                {"label": "Top Daily Gainers", "value": "Top Daily Gainers"},
+            ],
+            value="Auto",
+            clearable=False,
+            style={"width": "250px", "display": "inline-block", "color": "#000"},
+        ),
+        html.Span(id="last-updated-text", style={"color": "#91a39a", "marginLeft": "20px", "fontSize": "12px"}),
+    ], style={"marginBottom": "20px"}),
+
+    # 1. Automatic 30-Second Refresh Interval
+    dcc.Interval(
+        id="interval-component",
+        interval=30 * 1000,  # 30,000 milliseconds = 30 seconds
+        n_intervals=0,
+    ),
+
+    # 2. Container where table renders
+    html.Div(id="table-container"),
+], style={"padding": "20px", "backgroundColor": "#101814", "minHeight": "100vh"})
+
+
+# --- DASH REFRESH CALLBACK ---
+@app.callback(
+    [Output("table-container", "children"), Output("last-updated-text", "children")],
+    [Input("interval-component", "n_intervals"), Input("market-target-dropdown", "value")],
+)
+def update_table(n_intervals: int, selected_target: str):
+    frame, err = scrape_stock_top10(target=selected_target)
+    
+    if err:
+        table_element = html.Div(err, style={"color": "#ff6b6b", "padding": "10px"})
+    else:
+        table_element = build_table(frame)
+
+    timestamp = datetime.now().strftime("%I:%M:%S %p")
+    status_text = f"Last updated: {timestamp} (Refreshed {n_intervals} times)"
+
+    return table_element, status_text
+
+
+if __name__ == "__main__":
+    app.run_server(debug=True)
