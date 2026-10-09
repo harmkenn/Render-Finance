@@ -15,10 +15,10 @@ PAGES = {
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
 
-def get_active_market_url() -> tuple[str, str]:
+def get_active_market_url() -> str:
     """
     Determines whether to use Premarket or Regular Market gainers based on current US Eastern Time.
-    Returns a tuple of (page_label, url).
+    Returns the target URL string.
     """
     eastern = zoneinfo.ZoneInfo("America/New_York")
     now = datetime.now(eastern)
@@ -30,10 +30,10 @@ def get_active_market_url() -> tuple[str, str]:
 
         # 4:00 AM ET to 9:30 AM ET on weekdays -> Premarket
         if premarket_start <= now < market_open:
-            return "Premarket Movers", PAGES["Premarket Movers"]
+            return PAGES["Premarket Movers"]
 
     # Default to Regular/Top Gainers (Market Open, After Hours, and Weekends)
-    return "Top Daily Gainers", PAGES["Top Daily Gainers"]
+    return PAGES["Top Daily Gainers"]
 
 
 def parse_price(value: object) -> float:
@@ -56,22 +56,26 @@ def parse_volume(value: object) -> float:
         return 0.0
 
 
-def scrape_stock_top10(url: str | None = None) -> tuple[pd.DataFrame | None, str | None, str]:
+def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, str | None]:
     """
-    Scrapes stock data. If no URL is provided, automatically selects 
-    the appropriate URL based on the current market hour.
+    Scrapes stock data. Accepts either a URL or a key from PAGES (e.g., 'Premarket Movers').
+    If target is None or 'Auto', automatically selects the URL based on market hours.
+    Returns (DataFrame | None, ErrorMessage | None).
     """
-    if url is None:
-        label, url = get_active_market_url()
+    # 1. Resolve target input into a valid URL
+    if not target or target.lower() == "auto":
+        url = get_active_market_url()
+    elif target in PAGES:
+        url = PAGES[target]
     else:
-        label = "Custom Source"
+        url = target  # Assume direct URL string was passed
 
     try:
         response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
         response.raise_for_status()
         table = BeautifulSoup(response.text, "html.parser").find("table")
         if table is None:
-            return None, "The source page did not contain a market table.", label
+            return None, "The source page did not contain a market table."
 
         headers = [header.get_text(strip=True) for header in table.find_all("th")]
         rows = []
@@ -81,7 +85,7 @@ def scrape_stock_top10(url: str | None = None) -> tuple[pd.DataFrame | None, str
                 rows.append(cells)
 
         if not rows:
-            return None, "No market rows were returned by the source page.", label
+            return None, "No market rows were returned by the source page."
 
         frame = pd.DataFrame(rows, columns=headers if headers and len(headers) == len(rows[0]) else None)
 
@@ -109,11 +113,11 @@ def scrape_stock_top10(url: str | None = None) -> tuple[pd.DataFrame | None, str
             cols.insert(price_idx + 1, "Yahoo Finance")
             top_frame = top_frame[cols]
 
-        return top_frame, None, label
+        return top_frame, None
     except requests.RequestException as error:
-        return None, f"Could not reach StockAnalysis: {error}", label
+        return None, f"Could not reach StockAnalysis: {error}"
     except (ValueError, IndexError) as error:
-        return None, f"Could not read the market table: {error}", label
+        return None, f"Could not read the market table: {error}"
 
 
 def _change_column(frame: pd.DataFrame) -> object | None:
