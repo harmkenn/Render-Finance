@@ -62,7 +62,6 @@ def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, 
     If target is None or 'Auto', automatically selects the URL based on market hours.
     Returns (DataFrame | None, ErrorMessage | None).
     """
-    # 1. Resolve target input into a valid URL
     if not target or target.lower() == "auto":
         url = get_active_market_url()
     elif target in PAGES:
@@ -100,17 +99,16 @@ def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, 
 
         top_frame = frame.head(10).copy()
 
-        # Build Yahoo Finance URLs
-        top_frame["Yahoo Finance"] = top_frame[symbol_column].astype(str).map(
-            lambda ticker: f"https://finance.yahoo.com/quote/{ticker.upper()}/"
+        # Build Nasdaq URL column next to price
+        top_frame["Nasdaq Quote"] = top_frame[symbol_column].astype(str).map(
+            lambda ticker: f"https://www.nasdaq.com/market-activity/stocks/{ticker.lower()}"
         )
 
-        # Place 'Yahoo Finance' right after the original price column
         cols = list(top_frame.columns)
         if price_column and price_column in cols:
             price_idx = cols.index(price_column)
-            cols.remove("Yahoo Finance")
-            cols.insert(price_idx + 1, "Yahoo Finance")
+            cols.remove("Nasdaq Quote")
+            cols.insert(price_idx + 1, "Nasdaq Quote")
             top_frame = top_frame[cols]
 
         return top_frame, None
@@ -136,10 +134,10 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_thre
     rows["Ticker"] = rows[symbol_column].astype(str)
     rows["Ticker URL"] = rows["Ticker"].map(lambda ticker: f"https://stockanalysis.com/stocks/{ticker.lower()}/")
 
-    # Configure Yahoo Finance Link column
-    if "Yahoo Finance" in rows.columns:
-        rows["Yahoo Link"] = rows.apply(lambda r: f"[Yahoo Quote]({r['Yahoo Finance']})", axis=1)
-        rows = rows.drop(columns=["Yahoo Finance"])
+    # Configure Nasdaq Link column
+    if "Nasdaq Quote" in rows.columns:
+        rows["Nasdaq Link"] = rows.apply(lambda r: f"[Nasdaq Quote]({r['Nasdaq Quote']})", axis=1)
+        rows = rows.drop(columns=["Nasdaq Quote"])
 
     rows = rows.drop(columns=[symbol_column])
     market_cap_column = next((column for column in rows.columns if "market cap" in str(column).lower()), None)
@@ -155,9 +153,9 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_thre
 
     columns = [{"name": column, "id": column} for column in ordered]
 
-    # Enable markdown presentation for both Ticker and Yahoo Link columns
+    # Enable markdown presentation for Ticker and Nasdaq Link columns
     for col in columns:
-        if col["id"] in {"Ticker", "Yahoo Link"}:
+        if col["id"] in {"Ticker", "Nasdaq Link"}:
             col["presentation"] = "markdown"
 
     conditional = []
