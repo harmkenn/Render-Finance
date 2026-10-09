@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import datetime
-import zoneinfo
 import pandas as pd
 import requests
-import yfinance as yf
 from bs4 import BeautifulSoup
 from dash import dash_table, html
 
@@ -35,73 +32,6 @@ def parse_volume(value: object) -> float:
         return 0.0
 
 
-def get_active_market_window() -> str:
-    """Determine the current US stock market time window in Eastern Time."""
-    now = datetime.datetime.now(zoneinfo.ZoneInfo("America/New_York"))
-    # Check for weekend (Saturday = 5, Sunday = 6)
-    if now.weekday() >= 5:
-        return "Overnight"
-    
-    current_time = now.time()
-    
-    # 4:00 AM - 9:30 AM ET: Pre-Market
-    if datetime.time(4, 0) <= current_time < datetime.time(9, 30):
-        return "Pre Market"
-    # 9:30 AM - 4:00 PM ET: Regular Market
-    elif datetime.time(9, 30) <= current_time < datetime.time(16, 0):
-        return "Open Market"
-    # 4:00 PM - 8:00 PM ET: After-Hours
-    elif datetime.time(16, 0) <= current_time < datetime.time(20, 0):
-        return "After Hours"
-    # 8:00 PM - 4:00 AM ET: Overnight
-    else:
-        return "Overnight"
-
-
-def fetch_yahoo_prices(tickers: list[str]) -> tuple[dict[str, str], str]:
-    """Fetch price according to current active window (Pre-Market, Open, After Hours, Overnight)."""
-    prices = {}
-    window = get_active_market_window()
-    if not tickers:
-        return prices, f"Yahoo Price ({window})"
-    
-    try:
-        yf_tickers = yf.Tickers(" ".join(tickers))
-        for ticker_symbol in tickers:
-            try:
-                info = yf_tickers.tickers[ticker_symbol].fast_info
-                
-                # Retrieve all price attributes
-                reg_price = info.get("regularMarketPrice") or info.get("lastPrice")
-                pre_price = info.get("preMarketPrice")
-                post_price = info.get("postMarketPrice")
-                last_price = info.get("lastPrice")
-
-                # Select price based on current active window
-                if window == "Pre Market":
-                    price = pre_price or reg_price
-                elif window == "Open Market":
-                    price = reg_price
-                elif window == "After Hours":
-                    price = post_price or reg_price
-                elif window == "Overnight":
-                    # Overnight uses last available price (overnight trading session or latest settlement)
-                    price = last_price or post_price or reg_price
-                else:
-                    price = reg_price or last_price
-
-                if price is not None:
-                    prices[ticker_symbol] = f"${price:.2f}"
-                else:
-                    prices[ticker_symbol] = "N/A"
-            except Exception:
-                prices[ticker_symbol] = "N/A"
-    except Exception:
-        prices = {ticker: "N/A" for ticker in tickers}
-        
-    return prices, f"Yahoo Price ({window})"
-
-
 def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
     try:
         response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
@@ -109,14 +39,17 @@ def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
         table = BeautifulSoup(response.text, "html.parser").find("table")
         if table is None:
             return None, "The source page did not contain a market table."
+            
         headers = [header.get_text(strip=True) for header in table.find_all("th")]
         rows = []
         for table_row in table.find_all("tr")[1:25]:
             cells = [cell.get_text(" ", strip=True) for cell in table_row.find_all("td")]
             if cells:
                 rows.append(cells)
+                
         if not rows:
             return None, "No market rows were returned by the source page."
+            
         frame = pd.DataFrame(rows, columns=headers if headers and len(headers) == len(rows[0]) else None)
         
         symbol_column = next((column for column in frame.columns if "symbol" in str(column).lower() or "ticker" in str(column).lower()), frame.columns[0])
@@ -130,17 +63,17 @@ def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
         
         top_frame = frame.head(10).copy()
         
-        # Fetch Yahoo Finance Prices using dynamic market window detection
-        tickers = top_frame[symbol_column].astype(str).tolist()
-        yahoo_prices, col_name = fetch_yahoo_prices(tickers)
-        top_frame[col_name] = top_frame[symbol_column].map(yahoo_prices)
+        # Build Yahoo Finance URLs
+        top_frame["Yahoo Finance"] = top_frame[symbol_column].astype(str).map(
+            lambda ticker: f"https://finance.yahoo.com/quote/{ticker.upper()}/"
+        )
 
-        # Place 'Yahoo Price (...)' right after the original price column
+        # Place 'Yahoo Finance' right after the original price column
         cols = list(top_frame.columns)
         if price_column and price_column in cols:
             price_idx = cols.index(price_column)
-            cols.remove(col_name)
-            cols.insert(price_idx + 1, col_name)
+            cols.remove("Yahoo Finance")
+            cols.insert(price_idx + 1, "Yahoo Finance")
             top_frame = top_frame[cols]
 
         return top_frame, None
@@ -157,22 +90,39 @@ def _change_column(frame: pd.DataFrame) -> object | None:
 def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_threshold: float, red_threshold: float) -> html.Div | dash_table.DataTable:
     if frame is None or frame.empty:
         return html.Div("No stocks matched the current filters.", className="empty-state")
+        
     symbol_column = next((column for column in frame.columns if "symbol" in str(column).lower() or "ticker" in str(column).lower()), frame.columns[0])
     change_column = _change_column(frame)
     rows = frame.copy()
+    
+    # Configure StockAnalysis Ticker link
     rows["Ticker"] = rows[symbol_column].astype(str)
     rows["Ticker URL"] = rows["Ticker"].map(lambda ticker: f"https://stockanalysis.com/stocks/{ticker.lower()}/")
+    
+    # Configure Yahoo Finance Link column
+    if "Yahoo Finance" in rows.columns:
+        rows["Yahoo Link"] = rows.apply(lambda r: f"[Yahoo Quote]({r['Yahoo Finance']})", axis=1)
+        rows = rows.drop(columns=["Yahoo Finance"])
+    
     rows = rows.drop(columns=[symbol_column])
     market_cap_column = next((column for column in rows.columns if "market cap" in str(column).lower()), None)
     if market_cap_column:
         rows = rows.drop(columns=[market_cap_column])
+        
     ordered = ["Ticker"] + [column for column in rows.columns if column not in {"Ticker", "Ticker URL"}]
     data = rows[ordered].to_dict("records")
+    
     for row in data:
         ticker = row["Ticker"]
         row["Ticker"] = f"[{ticker}]({rows.loc[rows['Ticker'] == ticker, 'Ticker URL'].iloc[0]})"
+        
     columns = [{"name": column, "id": column} for column in ordered]
-    columns[0]["presentation"] = "markdown"
+    
+    # Enable markdown presentation for both Ticker and Yahoo Link columns
+    for col in columns:
+        if col["id"] in {"Ticker", "Yahoo Link"}:
+            col["presentation"] = "markdown"
+
     conditional = []
     if change_column:
         for index, row in frame.iterrows():
@@ -192,6 +142,7 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_thre
             else:
                 continue
             conditional.append({"if": {"row_index": frame.index.get_loc(index)}, "backgroundColor": color, "color": text_color, "fontWeight": "600"})
+            
     return dash_table.DataTable(
         data=data,
         columns=columns,
