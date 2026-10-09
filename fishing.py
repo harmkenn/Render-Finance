@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+import zoneinfo
 import pandas as pd
 import requests
 import yfinance as yf
@@ -33,24 +35,61 @@ def parse_volume(value: object) -> float:
         return 0.0
 
 
-def fetch_yahoo_prices(tickers: list[str]) -> dict[str, str]:
-    """Fetch current real-time or extended-hours price from Yahoo Finance."""
+def get_active_market_window() -> str:
+    """Determine the current US stock market time window in Eastern Time."""
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+    # Check for weekend (Saturday = 5, Sunday = 6)
+    if now.weekday() >= 5:
+        return "Overnight"
+    
+    current_time = now.time()
+    
+    # 4:00 AM - 9:30 AM ET: Pre-Market
+    if datetime.time(4, 0) <= current_time < datetime.time(9, 30):
+        return "Pre Market"
+    # 9:30 AM - 4:00 PM ET: Regular Market
+    elif datetime.time(9, 30) <= current_time < datetime.time(16, 0):
+        return "Open Market"
+    # 4:00 PM - 8:00 PM ET: After-Hours
+    elif datetime.time(16, 0) <= current_time < datetime.time(20, 0):
+        return "After Hours"
+    # 8:00 PM - 4:00 AM ET: Overnight
+    else:
+        return "Overnight"
+
+
+def fetch_yahoo_prices(tickers: list[str]) -> tuple[dict[str, str], str]:
+    """Fetch price according to current active window (Pre-Market, Open, After Hours, Overnight)."""
     prices = {}
+    window = get_active_market_window()
     if not tickers:
-        return prices
+        return prices, f"Yahoo Price ({window})"
     
     try:
         yf_tickers = yf.Tickers(" ".join(tickers))
         for ticker_symbol in tickers:
             try:
                 info = yf_tickers.tickers[ticker_symbol].fast_info
-                # Prefer real-time/extended-hours price if available, otherwise regular price
-                price = (
-                    info.get("lastPrice")
-                    or info.get("postMarketPrice")
-                    or info.get("preMarketPrice")
-                    or info.get("regularMarketPrice")
-                )
+                
+                # Retrieve all price attributes
+                reg_price = info.get("regularMarketPrice") or info.get("lastPrice")
+                pre_price = info.get("preMarketPrice")
+                post_price = info.get("postMarketPrice")
+                last_price = info.get("lastPrice")
+
+                # Select price based on current active window
+                if window == "Pre Market":
+                    price = pre_price or reg_price
+                elif window == "Open Market":
+                    price = reg_price
+                elif window == "After Hours":
+                    price = post_price or reg_price
+                elif window == "Overnight":
+                    # Overnight uses last available price (overnight trading session or latest settlement)
+                    price = last_price or post_price or reg_price
+                else:
+                    price = reg_price or last_price
+
                 if price is not None:
                     prices[ticker_symbol] = f"${price:.2f}"
                 else:
@@ -60,7 +99,7 @@ def fetch_yahoo_prices(tickers: list[str]) -> dict[str, str]:
     except Exception:
         prices = {ticker: "N/A" for ticker in tickers}
         
-    return prices
+    return prices, f"Yahoo Price ({window})"
 
 
 def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
@@ -91,17 +130,17 @@ def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
         
         top_frame = frame.head(10).copy()
         
-        # Fetch Yahoo Finance Prices
+        # Fetch Yahoo Finance Prices using dynamic market window detection
         tickers = top_frame[symbol_column].astype(str).tolist()
-        yahoo_prices = fetch_yahoo_prices(tickers)
-        top_frame["Yahoo Price"] = top_frame[symbol_column].map(yahoo_prices)
+        yahoo_prices, col_name = fetch_yahoo_prices(tickers)
+        top_frame[col_name] = top_frame[symbol_column].map(yahoo_prices)
 
-        # Place 'Yahoo Price' right after the original price column
+        # Place 'Yahoo Price (...)' right after the original price column
         cols = list(top_frame.columns)
         if price_column and price_column in cols:
             price_idx = cols.index(price_column)
-            cols.remove("Yahoo Price")
-            cols.insert(price_idx + 1, "Yahoo Price")
+            cols.remove(col_name)
+            cols.insert(price_idx + 1, col_name)
             top_frame = top_frame[cols]
 
         return top_frame, None
