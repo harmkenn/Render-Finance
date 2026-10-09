@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import requests
+import yfinance as yf
 from bs4 import BeautifulSoup
 from dash import dash_table, html
 
@@ -32,6 +33,36 @@ def parse_volume(value: object) -> float:
         return 0.0
 
 
+def fetch_yahoo_prices(tickers: list[str]) -> dict[str, str]:
+    """Fetch current real-time or extended-hours price from Yahoo Finance."""
+    prices = {}
+    if not tickers:
+        return prices
+    
+    try:
+        yf_tickers = yf.Tickers(" ".join(tickers))
+        for ticker_symbol in tickers:
+            try:
+                info = yf_tickers.tickers[ticker_symbol].fast_info
+                # Prefer real-time/extended-hours price if available, otherwise regular price
+                price = (
+                    info.get("lastPrice")
+                    or info.get("postMarketPrice")
+                    or info.get("preMarketPrice")
+                    or info.get("regularMarketPrice")
+                )
+                if price is not None:
+                    prices[ticker_symbol] = f"${price:.2f}"
+                else:
+                    prices[ticker_symbol] = "N/A"
+            except Exception:
+                prices[ticker_symbol] = "N/A"
+    except Exception:
+        prices = {ticker: "N/A" for ticker in tickers}
+        
+    return prices
+
+
 def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
     try:
         response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
@@ -48,13 +79,32 @@ def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
         if not rows:
             return None, "No market rows were returned by the source page."
         frame = pd.DataFrame(rows, columns=headers if headers and len(headers) == len(rows[0]) else None)
+        
+        symbol_column = next((column for column in frame.columns if "symbol" in str(column).lower() or "ticker" in str(column).lower()), frame.columns[0])
         price_column = next((column for column in frame.columns if "price" in str(column).lower()), None)
         volume_column = next((column for column in frame.columns if "volume" in str(column).lower()), None)
+        
         if price_column:
             frame = frame[frame[price_column].map(parse_price) >= 0.80]
         if volume_column:
             frame = frame[frame[volume_column].map(parse_volume) >= 1_000]
-        return frame.head(10).copy(), None
+        
+        top_frame = frame.head(10).copy()
+        
+        # Fetch Yahoo Finance Prices
+        tickers = top_frame[symbol_column].astype(str).tolist()
+        yahoo_prices = fetch_yahoo_prices(tickers)
+        top_frame["Yahoo Price"] = top_frame[symbol_column].map(yahoo_prices)
+
+        # Place 'Yahoo Price' right after the original price column
+        cols = list(top_frame.columns)
+        if price_column and price_column in cols:
+            price_idx = cols.index(price_column)
+            cols.remove("Yahoo Price")
+            cols.insert(price_idx + 1, "Yahoo Price")
+            top_frame = top_frame[cols]
+
+        return top_frame, None
     except requests.RequestException as error:
         return None, f"Could not reach StockAnalysis: {error}"
     except (ValueError, IndexError) as error:
