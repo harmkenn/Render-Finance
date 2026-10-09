@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import zoneinfo
 
@@ -34,6 +35,39 @@ def get_active_market_url() -> str:
 
     # Default to Regular/Top Gainers (Market Open, After Hours, and Weekends)
     return PAGES["Top Daily Gainers"]
+
+
+def fetch_nasdaq_price(symbol: str) -> str:
+    """
+    Queries Nasdaq's JSON API directly for the live price of a given ticker symbol.
+    """
+    clean_symbol = str(symbol).strip().lower()
+    url = f"https://api.nasdaq.com/api/quote/{clean_symbol}/info?assetclass=stocks"
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.nasdaq.com",
+        "Referer": f"https://www.nasdaq.com/market-activity/stocks/{clean_symbol}",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=4)
+        if response.status_code == 200:
+            data = response.json()
+            primary_data = data.get("data", {}).get("primaryData", {})
+            last_price = primary_data.get("lastSalePrice")
+            if last_price:
+                return last_price
+    except Exception:
+        pass
+    return "N/A"
+
+
+def fetch_nasdaq_prices_parallel(symbols: list[str]) -> list[str]:
+    """
+    Fetches prices for multiple tickers concurrently to keep response times fast.
+    """
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        return list(executor.map(fetch_nasdaq_price, symbols))
 
 
 def parse_price(value: object) -> float:
@@ -99,16 +133,23 @@ def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, 
 
         top_frame = frame.head(10).copy()
 
-        # Build Nasdaq URL column next to price
+        # Build Nasdaq Link column
         top_frame["Nasdaq Quote"] = top_frame[symbol_column].astype(str).map(
             lambda ticker: f"https://www.nasdaq.com/market-activity/stocks/{ticker.lower()}"
         )
 
+        # Fetch live price from Nasdaq API concurrently for all top 10 tickers
+        tickers = top_frame[symbol_column].astype(str).tolist()
+        top_frame["Nasdaq Price"] = fetch_nasdaq_prices_parallel(tickers)
+
+        # Place 'Nasdaq Price' and 'Nasdaq Quote' next to the original Price column
         cols = list(top_frame.columns)
         if price_column and price_column in cols:
             price_idx = cols.index(price_column)
+            cols.remove("Nasdaq Price")
             cols.remove("Nasdaq Quote")
-            cols.insert(price_idx + 1, "Nasdaq Quote")
+            cols.insert(price_idx + 1, "Nasdaq Price")
+            cols.insert(price_idx + 2, "Nasdaq Quote")
             top_frame = top_frame[cols]
 
         return top_frame, None
