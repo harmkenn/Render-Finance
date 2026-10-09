@@ -10,6 +10,5 @@ requests
 beautifulsoup4
 yfinance
 pytz
-datetime
-zoneinfo
+
 
