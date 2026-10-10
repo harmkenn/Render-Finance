@@ -1,6 +1,6 @@
 # Luma Market Tracker
 
-A modular Plotly Dash market tracker. `main.py` owns the collapsible settings sidebar and app frame; `fishing.py` is the first sub application and fetches Premarket Movers or Top Daily Gainers from StockAnalysis.
+A modular Plotly Dash market tracker. `main.py` owns the collapsible settings sidebar and app frame. The sub applications include the Premarket Movers and Top Daily Gainers tracker, a parabolic short inspector, an intraday tape, a daily stock analyzer with technical indicators and dividend history, and a normalized-price comparison app. The ticker-based sub-app selections use the shared sidebar ticker list.
 
 ## Run locally
 

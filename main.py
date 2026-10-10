@@ -5,9 +5,11 @@ from zoneinfo import ZoneInfo
 
 from dash import Dash, Input, Output, State, dcc, html
 
+from compare import clear_comparison_cache, compare_layout, render_comparison
 from fishing import PAGES, build_table, scrape_stock_top10
 from intraday import clear_caches, intraday_layout, render_intraday, render_sidebar_range
 from short_inspector import inspector_layout, render_inspector
+from stock_analyzer import clear_stock_history_cache, render_stock_analysis, stock_analyzer_layout
 
 DEFAULT_REFRESH_SECONDS = 30
 DEFAULT_YELLOW_THRESHOLD = 100.0
@@ -52,11 +54,11 @@ def sidebar() -> html.Aside:
         ]),
         html.Button("☰  Settings", id="sidebar-toggle", className="sidebar-toggle"),
         html.Div([
-            html.Label("INSPECTOR TICKERS", className="setting-label"),
+            html.Label("TICKER LIST", className="setting-label"),
             dcc.Textarea(id="inspector-tickers", value=", ".join(DEFAULT_TICKERS), placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
             html.Span("comma separated", className="setting-suffix"),
             html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
             html.Div([
                 html.Label("MARKET VIEW", className="setting-label"),
                 dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
@@ -75,7 +77,7 @@ def sidebar() -> html.Aside:
             ], id="fishing-settings"),
         ], id="sidebar-settings", className="sidebar-settings"),
         html.Div([html.P("CURRENT PRICES & 60-DAY RANGE", className="eyebrow"), html.Div(id="intraday-sidebar-range")], id="intraday-sidebar-panel", className="intraday-sidebar-panel", style={"display": "none"}),
-        html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", id="sidebar-app-name", className="source-name"), html.P("Top market gainers with live filters", className="target-note")], className="sidebar-target"),
+        html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", id="sidebar-app-name", className="source-name"), html.P("Top market gainers with live filters", id="sidebar-target-note", className="target-note")], className="sidebar-target"),
     ], id="sidebar", className="sidebar")
 
 
@@ -92,6 +94,8 @@ app.layout = html.Div([
         ], id="fishing-content"),
         inspector_layout(DEFAULT_TICKERS),
         intraday_layout(DEFAULT_TICKERS),
+        stock_analyzer_layout(DEFAULT_TICKERS),
+        compare_layout(DEFAULT_TICKERS),
     ], id="main-content", className="main-content"),
 ], className="app-shell")
 
@@ -107,21 +111,31 @@ def toggle_sidebar(_clicks: int | None, class_name: str) -> str:
     Output("fishing-content", "style"),
     Output("inspector-content", "style"),
     Output("intraday-content", "style"),
+    Output("stock-analyzer-content", "style"),
+    Output("compare-content", "style"),
     Output("sidebar-app-name", "children"),
+    Output("sidebar-target-note", "children"),
     Output("fishing-settings", "style"),
     Output("intraday-sidebar-panel", "style"),
+    Output("manual-refresh", "style"),
     Input("app-select", "value"),
 )
 def switch_app(app_name: str):
     inspector_active = app_name == "inspector"
     intraday_active = app_name == "intraday"
+    stock_analyzer_active = app_name == "stock-analyzer"
+    compare_active = app_name == "compare"
     return (
-        {"display": "none"} if inspector_active or intraday_active else {},
+        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
         {} if inspector_active else {"display": "none"},
         {} if intraday_active else {"display": "none"},
-        "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
-        {"display": "none"} if inspector_active or intraday_active else {},
+        {} if stock_analyzer_active else {"display": "none"},
+        {} if compare_active else {"display": "none"},
+        "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
+        "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top market gainers with live filters",
+        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
         {} if intraday_active else {"display": "none"},
+        {} if app_name == "fishing" else {"display": "none"},
     )
 
 
@@ -130,14 +144,32 @@ def switch_app(app_name: str):
     Output("inspector-ticker", "value"),
     Output("intraday-ticker", "options"),
     Output("intraday-ticker", "value"),
+    Output("stock-analyzer-ticker", "options"),
+    Output("stock-analyzer-ticker", "value"),
+    Output("compare-tickers", "options"),
+    Output("compare-tickers", "value"),
     Input("inspector-tickers", "value"),
     State("inspector-ticker", "value"),
+    State("intraday-ticker", "value"),
+    State("stock-analyzer-ticker", "value"),
+    State("compare-tickers", "value"),
 )
-def update_inspector_tickers(raw_tickers: str | None, current_ticker: str | None):
+def update_inspector_tickers(
+    raw_tickers: str | None,
+    current_ticker: str | None,
+    current_intraday_ticker: str | None,
+    current_analyzer_ticker: str | None,
+    current_compare_tickers: list[str] | None,
+):
     tickers = parse_tickers(raw_tickers)
-    value = current_ticker if current_ticker in tickers else tickers[0]
     options = [{"label": ticker, "value": ticker} for ticker in tickers]
-    return options, value, options, value
+    inspector_value = current_ticker if current_ticker in tickers else tickers[0]
+    intraday_value = current_intraday_ticker if current_intraday_ticker in tickers else tickers[0]
+    analyzer_value = current_analyzer_ticker if current_analyzer_ticker in tickers else tickers[0]
+    compare_values = [ticker for ticker in (current_compare_tickers or []) if ticker in tickers]
+    if not compare_values:
+        compare_values = tickers[:7]
+    return options, inspector_value, options, intraday_value, options, analyzer_value, options, compare_values
 
 
 @app.callback(
@@ -166,6 +198,65 @@ def update_inspector(_clicks: int | None, symbol: str):
 )
 def update_intraday(_clicks: int | None, symbol: str):
     return render_intraday(symbol, _clicks)
+
+
+@app.callback(
+    Output("stock-analyzer-status", "children"),
+    Output("stock-analyzer-metrics", "children"),
+    Output("stock-analyzer-price", "figure"),
+    Output("stock-analyzer-indicators", "figure"),
+    Output("stock-analyzer-statistics", "children"),
+    Output("stock-analyzer-data", "children"),
+    Input("stock-analyzer-refresh", "n_clicks"),
+    Input("stock-analyzer-ticker", "value"),
+    Input("stock-analyzer-dates", "start_date"),
+    Input("stock-analyzer-dates", "end_date"),
+    Input("stock-analyzer-dividends-only", "value"),
+)
+def update_stock_analyzer(
+    _clicks: int | None,
+    symbol: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    filters: list[str] | None,
+):
+    from dash import ctx
+
+    if ctx.triggered_id == "stock-analyzer-refresh":
+        clear_stock_history_cache()
+    try:
+        return render_stock_analysis(
+            symbol,
+            start_date,
+            end_date,
+            dividends_only="dividends" in (filters or []),
+        )
+    except Exception as error:
+        return f"Error analyzing {symbol or 'ticker'}: {error}", [], {}, {}, [], html.Div()
+
+
+@app.callback(
+    Output("compare-status", "children"),
+    Output("compare-chart", "figure"),
+    Output("compare-table", "children"),
+    Input("compare-tickers", "value"),
+    Input("compare-horizon", "value"),
+    Input("compare-refresh", "n_clicks"),
+)
+def update_comparison(
+    symbols: list[str] | None,
+    horizon: str | None,
+    _clicks: int | None,
+):
+    from dash import ctx
+
+    if ctx.triggered_id == "compare-refresh":
+        clear_comparison_cache()
+    try:
+        return render_comparison(symbols, horizon)
+    except Exception as error:
+        figure = {}
+        return f"Error fetching comparison data: {error}", figure, html.Div()
 
 
 @app.callback(

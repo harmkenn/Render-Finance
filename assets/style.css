@@ -59,3 +59,35 @@
 @media (max-width:900px) { .intraday-top-grid { grid-template-columns:1fr; } .intraday-grid { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:640px) { .inspector-controls,.intraday-controls { align-items:stretch; flex-direction:column; } .inspector-ticker,.intraday-ticker { min-width:0; } .inspector-grid,.inspector-detail-grid,.intraday-grid { grid-template-columns:1fr; } }
 @media (max-width:640px) { .score-breakdown { grid-template-columns:1fr; } }
+.stock-analyzer-controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
+.stock-analyzer-ticker { flex:1; min-width:220px; max-width:360px; }
+.stock-analyzer-controls .Select-control { background:var(--surface-soft)!important; border:1px solid var(--line)!important; border-radius:7px!important; min-height:42px!important; }
+.stock-analyzer-controls .Select-value-label,.stock-analyzer-controls .Select-placeholder { color:var(--ink)!important; }
+.stock-analyzer-controls .Select-menu-outer,.stock-analyzer-controls .Select-option { background:var(--surface-soft); color:var(--ink); }
+.stock-analyzer-dates .DateRangePickerInput { background:var(--surface-soft); border:1px solid var(--line); border-radius:7px; }
+.stock-analyzer-dates .DateInput,.stock-analyzer-dates .DateInput_input { background:var(--surface-soft); color:var(--ink); }
+.stock-analyzer-dates .DateInput_input { font:12px 'DM Sans'; }
+.stock-analyzer-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:18px 0; }
+.stock-analyzer-metric { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:15px; }
+.stock-analyzer-label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:1px; }
+.stock-analyzer-value { color:var(--ink); font-size:16px; font-weight:600; margin-top:8px; }
+.stock-analyzer-chart,.stock-analyzer-data-section { min-width:0; padding:20px; margin-top:16px; }
+.stock-analyzer-data-section h3 { margin:0; font-size:14px; }
+.stock-analyzer-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0; }
+.stock-analyzer-checkbox { color:var(--muted); font-size:11px; margin-left:auto; }
+.stock-analyzer-checkbox input { accent-color:var(--mint); margin-right:6px; }
+@media (max-width:900px) { .stock-analyzer-grid { grid-template-columns:repeat(2,1fr); } .stock-analyzer-stats { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:640px) { .stock-analyzer-controls { align-items:stretch; flex-direction:column; } .stock-analyzer-ticker { min-width:0; max-width:none; } .stock-analyzer-grid,.stock-analyzer-stats { grid-template-columns:1fr; } .stock-analyzer-data-section .chart-heading { align-items:flex-start; flex-direction:column; } .stock-analyzer-checkbox { margin-left:0; } }
+.compare-controls { display:grid; grid-template-columns:minmax(240px,3fr) minmax(160px,1fr) auto; gap:14px; align-items:end; margin:0 0 12px; }
+.compare-ticker-control,.compare-horizon-control { min-width:0; }
+.compare-tickers .Select-control,.compare-horizon .Select-control { background:var(--surface-soft)!important; border:1px solid var(--line)!important; border-radius:7px!important; min-height:42px!important; }
+.compare-tickers .Select-value-label,.compare-tickers .Select-placeholder,.compare-horizon .Select-value-label { color:var(--ink)!important; }
+.compare-tickers .Select-multi-value-wrapper { padding:3px; }
+.compare-tickers .Select-value { background:#294337!important; border-color:#47735f!important; color:var(--ink)!important; }
+.compare-tickers .Select-value-icon { border-color:#47735f!important; color:var(--ink)!important; }
+.compare-tickers .Select-menu-outer,.compare-tickers .Select-option,.compare-horizon .Select-menu-outer,.compare-horizon .Select-option { background:var(--surface-soft); color:var(--ink)!important; }
+.compare-tickers .Select-option.is-focused,.compare-horizon .Select-option.is-focused { background:#294337; }
+.compare-chart,.compare-data-section { min-width:0; padding:20px; margin-top:16px; }
+.compare-data-section h3 { margin:0; font-size:14px; }
+@media (max-width:900px) { .compare-controls { grid-template-columns:1fr 1fr; } .compare-controls > .add-button { justify-self:start; } }
+@media (max-width:640px) { .compare-controls { grid-template-columns:1fr; } .compare-controls > .add-button { justify-self:stretch; } }
