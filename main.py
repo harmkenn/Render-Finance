@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from dash import Dash, Input, Output, State, dcc, html
 
 from compare import clear_comparison_cache, compare_layout, render_comparison
-from fishing import PAGES, build_table, scrape_stock_top10
+from fishing import API_ENDPOINTS, build_table, fetch_stock_top10
 from intraday import clear_caches, intraday_layout, render_intraday, render_sidebar_range
 from short_inspector import inspector_layout, render_inspector
 from stock_analyzer import clear_stock_history_cache, render_stock_analysis, stock_analyzer_layout
