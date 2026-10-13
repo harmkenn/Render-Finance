@@ -1,159 +1,138 @@
 from __future__ import annotations
 
+import time
 import dash
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 from dash import Input, Output, dcc, dash_table, html
 
-PAGES = {
-    "Premarket Movers": "https://stockanalysis.com/markets/premarket/",
-    "Top Daily Gainers": "https://stockanalysis.com/markets/gainers/",
+# Internal API endpoints for StockAnalysis market screeners
+API_ENDPOINTS = {
+    "Premarket Movers": "https://stockanalysis.com/api/screener/s/f?m=premarketGainers&s=volume-desc",
+    "Top Daily Gainers": "https://stockanalysis.com/api/screener/s/f?m=gainers&s=volume-desc",
 }
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 
-def parse_price(value: object) -> float:
+def fetch_stock_top10(api_url: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Fetches real-time stock data directly from internal JSON API endpoints."""
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+    }
+
     try:
-        return float(str(value).replace("$", "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def parse_volume(value: object) -> float:
-    try:
-        clean_value = str(value).replace(",", "").strip().upper()
-        multiplier = 1
-        for suffix, factor in (("K", 1_000), ("M", 1_000_000), ("B", 1_000_000_000)):
-            if clean_value.endswith(suffix):
-                multiplier, clean_value = factor, clean_value[:-1]
-                break
-        return float(clean_value) * multiplier
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
-    try:
-        response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
+        # Append a microsecond timestamp parameter to force cache busting
+        cache_buster_url = f"{api_url}&_t={int(time.time() * 1000)}"
+        response = requests.get(cache_buster_url, headers=headers, timeout=10)
         response.raise_for_status()
-        table = BeautifulSoup(response.text, "html.parser").find("table")
-        if table is None:
-            return None, "The source page did not contain a market table."
-        headers = [header.get_text(strip=True) for header in table.find_all("th")]
-        rows = []
-        for table_row in table.find_all("tr")[1:25]:
-            cells = [cell.get_text(" ", strip=True) for cell in table_row.find_all("td")]
-            if cells:
-                rows.append(cells)
-        if not rows:
-            return None, "No market rows were returned by the source page."
-        frame = pd.DataFrame(
-            rows,
-            columns=headers if headers and len(headers) == len(rows[0]) else None,
-        )
-        price_column = next(
-            (column for column in frame.columns if "price" in str(column).lower()),
-            None,
-        )
-        volume_column = next(
-            (column for column in frame.columns if "volume" in str(column).lower()),
-            None,
-        )
-        if price_column:
-            frame = frame[frame[price_column].map(parse_price) >= 0.80]
-        if volume_column:
-            frame = frame[frame[volume_column].map(parse_volume) >= 1_000]
+
+        payload = response.json()
+        raw_rows = payload.get("data", {}).get("data", [])
+
+        if not raw_rows:
+            return None, "No market data returned from the source API."
+
+        # Raw JSON data into DataFrame
+        frame = pd.DataFrame(raw_rows)
+
+        # Ensure required columns exist
+        if "s" not in frame.columns:
+            return None, "Unexpected data format received from API."
+
+        # Standardize column naming and missing optional fields
+        frame = frame.rename(columns={"s": "symbol", "n": "name"})
+
+        # Apply price and volume threshold filters
+        if "price" in frame.columns:
+            frame["price"] = pd.to_numeric(frame["price"], errors="coerce").fillna(0.0)
+            frame = frame[frame["price"] >= 0.80]
+
+        if "volume" in frame.columns:
+            frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce").fillna(0)
+            frame = frame[frame["volume"] >= 1_000]
+
         return frame.head(10).copy(), None
+
     except requests.RequestException as error:
-        return None, f"Could not reach StockAnalysis: {error}"
-    except (ValueError, IndexError) as error:
-        return None, f"Could not read the market table: {error}"
-
-
-def _change_column(frame: pd.DataFrame) -> object | None:
-    return next(
-        (
-            column
-            for column in frame.columns
-            if "%" in str(column) or "change" in str(column).lower()
-        ),
-        None,
-    )
+        return None, f"Could not reach StockAnalysis API: {error}"
+    except (ValueError, KeyError) as error:
+        return None, f"Could not parse market response: {error}"
 
 
 def build_table(
     frame: pd.DataFrame | None,
-    yellow_threshold: float,
-    orange_threshold: float,
-    red_threshold: float,
+    yellow_threshold: float = 5.0,
+    orange_threshold: float = 10.0,
+    red_threshold: float = 20.0,
 ) -> html.Div | dash_table.DataTable:
     if frame is None or frame.empty:
         return html.Div("No stocks matched the current filters.", className="empty-state")
-    
-    symbol_column = next(
-        (
-            column
-            for column in frame.columns
-            if "symbol" in str(column).lower() or "ticker" in str(column).lower()
-        ),
-        frame.columns[0],
+
+    # Pick dynamic percentage change column ('change' or 'chg')
+    change_column = next(
+        (col for col in ["change", "chg", "changePercent"] if col in frame.columns), None
     )
-    change_column = _change_column(frame)
+
     rows = frame.copy()
-    rows["Ticker"] = rows[symbol_column].astype(str)
-    rows["Ticker URL"] = rows["Ticker"].map(
-        lambda ticker: f"https://stockanalysis.com/stocks/{ticker.lower()}/"
+
+    # Format Ticker with Markdown links
+    rows["Ticker"] = rows["symbol"].astype(str)
+    rows["Ticker"] = rows["Ticker"].map(
+        lambda t: f"[{t}](https://stockanalysis.com/stocks/{t.lower()}/)"
     )
-    rows = rows.drop(columns=[symbol_column])
-    market_cap_column = next(
-        (column for column in rows.columns if "market cap" in str(column).lower()),
-        None,
-    )
-    if market_cap_column:
-        rows = rows.drop(columns=[market_cap_column])
-    
-    ordered = ["Ticker"] + [
-        column for column in rows.columns if column not in {"Ticker", "Ticker URL"}
-    ]
-    data = rows[ordered].to_dict("records")
-    for row in data:
-        ticker = row["Ticker"]
-        row["Ticker"] = f"[{ticker}]({rows.loc[rows['Ticker'] == ticker, 'Ticker URL'].iloc[0]})"
-    
-    columns = [{"name": column, "id": column} for column in ordered]
-    columns[0]["presentation"] = "markdown"
-    conditional = []
-    
+
+    # Format numeric displays cleanly for Dash UI
+    if "price" in rows.columns:
+        rows["Price"] = rows["price"].map(lambda val: f"${val:,.2f}")
     if change_column:
-        for index, row in frame.iterrows():
+        rows["% Change"] = rows[change_column].map(
+            lambda val: f"+{val:.2f}%" if val > 0 else f"{val:.2f}%"
+        )
+    if "volume" in rows.columns:
+        rows["Volume"] = rows["volume"].map(lambda val: f"{val:,.0f}")
+
+    # Column ordering for presentation
+    desired_order = ["Ticker", "name", "Price", "% Change", "Volume"]
+    display_columns = [col for col in desired_order if col in rows.columns]
+
+    data = rows[display_columns].to_dict("records")
+    columns = [
+        {
+            "name": col.replace("name", "Company Name"),
+            "id": col,
+            "presentation": "markdown" if col == "Ticker" else "input",
+        }
+        for col in display_columns
+    ]
+
+    # Dynamic row highlighting based on change percentage
+    conditional = []
+    if change_column:
+        for idx, row in frame.iterrows():
             try:
-                value = float(
-                    str(row[change_column])
-                    .replace("%", "")
-                    .replace("+", "")
-                    .replace(",", "")
-                    .strip()
-                )
+                val = float(row[change_column])
             except (TypeError, ValueError):
                 continue
-            if value >= red_threshold:
-                color = "#b22222"
-                text_color = "white"
-            elif value >= orange_threshold:
-                color = "#ff7f0e"
-                text_color = "white"
-            elif value >= yellow_threshold:
-                color = "#f4d03f"
-                text_color = "#17221b"
+
+            if val >= red_threshold:
+                color, text_color = "#b22222", "white"
+            elif val >= orange_threshold:
+                color, text_color = "#ff7f0e", "white"
+            elif val >= yellow_threshold:
+                color, text_color = "#f4d03f", "#17221b"
             else:
                 continue
+
             conditional.append(
                 {
-                    "if": {"row_index": frame.index.get_loc(index)},
+                    "if": {"row_index": frame.index.get_loc(idx)},
                     "backgroundColor": color,
                     "color": text_color,
                     "fontWeight": "600",
@@ -181,7 +160,7 @@ def build_table(
         style_cell={
             "backgroundColor": "#17221d",
             "color": "#e8f1eb",
-            "fontFamily": "DM Sans",
+            "fontFamily": "DM Sans, sans-serif",
             "fontSize": "13px",
             "border": "0",
             "borderTop": "1px solid #26362e",
@@ -194,41 +173,52 @@ def build_table(
 
 
 # ----------------------------------------------------------------------
-# DASH APPLICATION SETUP & CALLBACK
+# DASH APPLICATION LAYOUT & CALLBACKS
 # ----------------------------------------------------------------------
 
 app = dash.Dash(__name__)
 
 app.layout = html.Div(
     [
-        html.H1("Live Market Movers"),
+        html.H1("Live Market Movers", style={"fontFamily": "DM Sans, sans-serif", "color": "#e8f1eb"}),
         
-        # 1. Interval component: fires every 30,000 ms (30 seconds)
-        dcc.Interval(
-            id="interval-component",
-            interval=30_000,  # Milliseconds
-            n_intervals=0,    # Starts at 0, increments on each tick
+        # Dropdown to toggle market sources dynamically
+        dcc.Dropdown(
+            id="market-selector",
+            options=[{"label": k, "value": v} for k, v in API_ENDPOINTS.items()],
+            value=API_ENDPOINTS["Premarket Movers"],
+            clearable=False,
+            style={"width": "300px", "marginBottom": "20px"},
         ),
         
-        # 2. Target container: refreshed by the callback
+        # Interval component set to fetch live data every 15 seconds (15,000 ms)
+        dcc.Interval(
+            id="interval-component",
+            interval=15_000,
+            n_intervals=0,
+        ),
+        
+        # Target container refreshed dynamically
         html.Div(id="table-container"),
-    ]
+    ],
+    style={"padding": "24px", "backgroundColor": "#0d1410", "minHeight": "100vh"},
 )
 
 
-# 3. Callback to re-scrape and update the table automatically
 @app.callback(
     Output("table-container", "children"),
     Input("interval-component", "n_intervals"),
+    Input("market-selector", "value"),
 )
-def update_table_automatically(n_intervals: int):
-    # Fetch latest data on page load (n_intervals=0) and on every interval tick
-    df, error_msg = scrape_stock_top10(PAGES["Premarket Movers"])
-    
+def update_table_automatically(n_intervals: int, selected_api_url: str):
+    df, error_msg = fetch_stock_top10(selected_api_url)
+
     if error_msg:
-        return html.Div(f"Error fetching data: {error_msg}", style={"color": "red"})
-    
-    # Render table with thresholds
+        return html.Div(
+            f"Error updating stock data: {error_msg}",
+            style={"color": "#ff6b6b", "fontFamily": "DM Sans, sans-serif"},
+        )
+
     return build_table(
         frame=df,
         yellow_threshold=5.0,
