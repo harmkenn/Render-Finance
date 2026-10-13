@@ -74,6 +74,9 @@ def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_thre
     rows["Ticker"] = rows[symbol_column].astype(str)
     rows["Ticker URL"] = rows["Ticker"].map(lambda ticker: f"https://stockanalysis.com/stocks/{ticker.lower()}/")
     rows = rows.drop(columns=[symbol_column])
+    market_cap_column = next((column for column in rows.columns if "market cap" in str(column).lower()), None)
+    if market_cap_column:
+        rows = rows.drop(columns=[market_cap_column])
     ordered = ["Ticker"] + [column for column in rows.columns if column not in {"Ticker", "Ticker URL"}]
     data = rows[ordered].to_dict("records")
     for row in data:
