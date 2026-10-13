@@ -17,21 +17,26 @@ PAGES = {
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
 
-def get_active_market_url() -> str:
-    """Determines whether to use Premarket or Regular Market gainers based on US Eastern Time."""
+def is_premarket_active() -> bool:
+    """Checks if current US Eastern time falls within active Premarket hours (Mon-Fri, 4:00 AM - 9:30 AM ET)."""
     eastern = zoneinfo.ZoneInfo("America/New_York")
     now = datetime.now(eastern)
 
-    # Weekdays: Monday (0) through Friday (4)
+    # Weekdays only: Monday (0) through Friday (4)
     if now.weekday() < 5:
         premarket_start = now.replace(hour=4, minute=0, second=0, microsecond=0)
         market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        return premarket_start <= now < market_open
 
-        # 4:00 AM ET to 9:30 AM ET on weekdays -> Premarket
-        if premarket_start <= now < market_open:
-            return PAGES["Premarket Movers"]
+    return False
 
-    # Default to Regular/Top Gainers (Market Open, After Hours, and Weekends)
+
+def get_active_market_url() -> str:
+    """Determines active URL based on US Eastern market session."""
+    if is_premarket_active():
+        return PAGES["Premarket Movers"]
+
+    # Default to Regular Market Gainers during regular session, after-hours, and weekends
     return PAGES["Top Daily Gainers"]
 
 
@@ -44,6 +49,8 @@ def fetch_nasdaq_price(symbol: str) -> str:
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www.nasdaq.com",
         "Referer": f"https://www.nasdaq.com/market-activity/stocks/{clean_symbol}",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
     }
     try:
         response = requests.get(url, headers=headers, timeout=4)
@@ -85,7 +92,7 @@ def parse_volume(value: object) -> float:
 
 
 def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, str | None]:
-    """Scrapes stock data with flexible market routing and schema mapping."""
+    """Scrapes stock data with flexible market routing, cache suppression, and schema mapping."""
     if not target or str(target).strip().lower() in {"auto", "none"}:
         url = get_active_market_url()
     elif target in PAGES:
@@ -93,14 +100,22 @@ def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, 
     else:
         url = str(target)
 
+    # Use cache-busting headers to prevent stale requests
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
     try:
-        response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         table = BeautifulSoup(response.text, "html.parser").find("table")
         if table is None:
             return None, "The source page did not contain a market table."
 
-        headers = [header.get_text(strip=True) for header in table.find_all("th")]
+        headers_list = [header.get_text(strip=True) for header in table.find_all("th")]
         rows = []
         for table_row in table.find_all("tr")[1:30]:
             cells = [cell.get_text(" ", strip=True) for cell in table_row.find_all("td")]
@@ -110,7 +125,7 @@ def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, 
         if not rows:
             return None, "No market rows were returned by the source page."
 
-        frame = pd.DataFrame(rows, columns=headers if headers and len(headers) == len(rows[0]) else None)
+        frame = pd.DataFrame(rows, columns=headers_list if headers_list and len(headers_list) == len(rows[0]) else None)
 
         symbol_column = next((c for c in frame.columns if "symbol" in str(c).lower() or "ticker" in str(c).lower()), frame.columns[0])
         price_column = next((c for c in frame.columns if "price" in str(c).lower()), None)
@@ -248,7 +263,7 @@ app = dash.Dash(__name__)
 
 app.layout = html.Div([
     html.H2("Live Market Top Movers", style={"color": "#e8f1eb", "fontFamily": "DM Sans"}),
-    
+
     html.Div([
         html.Label("Select Market View: ", style={"color": "#91a39a", "marginRight": "10px"}),
         dcc.Dropdown(
@@ -265,14 +280,14 @@ app.layout = html.Div([
         html.Span(id="last-updated-text", style={"color": "#91a39a", "marginLeft": "20px", "fontSize": "12px"}),
     ], style={"marginBottom": "20px"}),
 
-    # 1. Automatic 30-Second Refresh Interval
+    # Automatic 30-Second Refresh
     dcc.Interval(
         id="interval-component",
-        interval=30 * 1000,  # 30,000 milliseconds = 30 seconds
+        interval=30 * 1000,  # 30 seconds
         n_intervals=0,
     ),
 
-    # 2. Container where table renders
+    # Container where table renders
     html.Div(id="table-container"),
 ], style={"padding": "20px", "backgroundColor": "#101814", "minHeight": "100vh"})
 
@@ -284,14 +299,20 @@ app.layout = html.Div([
 )
 def update_table(n_intervals: int, selected_target: str):
     frame, err = scrape_stock_top10(target=selected_target)
-    
+
     if err:
         table_element = html.Div(err, style={"color": "#ff6b6b", "padding": "10px"})
     else:
         table_element = build_table(frame)
 
     timestamp = datetime.now().strftime("%I:%M:%S %p")
-    status_text = f"Last updated: {timestamp} (Refreshed {n_intervals} times)"
+    
+    # Indicate premarket status in status bar if auto mode is selected
+    mode_status = ""
+    if selected_target == "Auto":
+        mode_status = " [Premarket Active]" if is_premarket_active() else " [Regular Session/Off-Hours Active]"
+
+    status_text = f"Last updated: {timestamp}{mode_status} (Refreshed {n_intervals} times)"
 
     return table_element, status_text
 
