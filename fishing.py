@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import time
-import dash
 import pandas as pd
 import requests
-from dash import Input, Output, dcc, dash_table, html
+from dash import dash_table, html
 
-# Internal API endpoints for StockAnalysis market screeners
+# Pages mapped directly to StockAnalysis internal JSON endpoints
 PAGES = {
-    "Premarket Movers": "https://stockanalysis.com/api/screener/s/f?m=premarketGainers&s=volume-desc",
-    "Top Daily Gainers": "https://stockanalysis.com/api/screener/s/f?m=gainers&s=volume-desc",
-}
-API_ENDPOINTS = {
     "Premarket Movers": "https://stockanalysis.com/api/screener/s/f?m=premarketGainers&s=volume-desc",
     "Top Daily Gainers": "https://stockanalysis.com/api/screener/s/f?m=gainers&s=volume-desc",
 }
@@ -22,8 +17,11 @@ USER_AGENT = (
 )
 
 
-def fetch_stock_top10(api_url: str) -> tuple[pd.DataFrame | None, str | None]:
-    """Fetches real-time stock data directly from internal JSON API endpoints."""
+def fetch_stock_top10(target_url_or_key: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Fetches real-time stock data directly from JSON endpoints."""
+    # Resolve page name key to URL if passed as key
+    api_url = PAGES.get(target_url_or_key, target_url_or_key)
+
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
@@ -32,7 +30,7 @@ def fetch_stock_top10(api_url: str) -> tuple[pd.DataFrame | None, str | None]:
     }
 
     try:
-        # Append a microsecond timestamp parameter to force cache busting
+        # Append microsecond timestamp parameter for cache busting
         cache_buster_url = f"{api_url}&_t={int(time.time() * 1000)}"
         response = requests.get(cache_buster_url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -43,17 +41,13 @@ def fetch_stock_top10(api_url: str) -> tuple[pd.DataFrame | None, str | None]:
         if not raw_rows:
             return None, "No market data returned from the source API."
 
-        # Raw JSON data into DataFrame
         frame = pd.DataFrame(raw_rows)
 
-        # Ensure required columns exist
         if "s" not in frame.columns:
             return None, "Unexpected data format received from API."
 
-        # Standardize column naming and missing optional fields
         frame = frame.rename(columns={"s": "symbol", "n": "name"})
 
-        # Apply price and volume threshold filters
         if "price" in frame.columns:
             frame["price"] = pd.to_numeric(frame["price"], errors="coerce").fillna(0.0)
             frame = frame[frame["price"] >= 0.80]
@@ -70,6 +64,10 @@ def fetch_stock_top10(api_url: str) -> tuple[pd.DataFrame | None, str | None]:
         return None, f"Could not parse market response: {error}"
 
 
+# Alias for backward compatibility with existing codebase
+scrape_stock_top10 = fetch_stock_top10
+
+
 def build_table(
     frame: pd.DataFrame | None,
     yellow_threshold: float = 5.0,
@@ -79,20 +77,16 @@ def build_table(
     if frame is None or frame.empty:
         return html.Div("No stocks matched the current filters.", className="empty-state")
 
-    # Pick dynamic percentage change column ('change' or 'chg')
     change_column = next(
         (col for col in ["change", "chg", "changePercent"] if col in frame.columns), None
     )
 
     rows = frame.copy()
-
-    # Format Ticker with Markdown links
     rows["Ticker"] = rows["symbol"].astype(str)
     rows["Ticker"] = rows["Ticker"].map(
         lambda t: f"[{t}](https://stockanalysis.com/stocks/{t.lower()}/)"
     )
 
-    # Format numeric displays cleanly for Dash UI
     if "price" in rows.columns:
         rows["Price"] = rows["price"].map(lambda val: f"${val:,.2f}")
     if change_column:
@@ -102,7 +96,6 @@ def build_table(
     if "volume" in rows.columns:
         rows["Volume"] = rows["volume"].map(lambda val: f"{val:,.0f}")
 
-    # Column ordering for presentation
     desired_order = ["Ticker", "name", "Price", "% Change", "Volume"]
     display_columns = [col for col in desired_order if col in rows.columns]
 
@@ -116,7 +109,6 @@ def build_table(
         for col in display_columns
     ]
 
-    # Dynamic row highlighting based on change percentage
     conditional = []
     if change_column:
         for idx, row in frame.iterrows():
@@ -174,62 +166,3 @@ def build_table(
         },
         style_data_conditional=conditional,
     )
-
-
-# ----------------------------------------------------------------------
-# DASH APPLICATION LAYOUT & CALLBACKS
-# ----------------------------------------------------------------------
-
-app = dash.Dash(__name__)
-
-app.layout = html.Div(
-    [
-        html.H1("Live Market Movers", style={"fontFamily": "DM Sans, sans-serif", "color": "#e8f1eb"}),
-        
-        # Dropdown to toggle market sources dynamically
-        dcc.Dropdown(
-            id="market-selector",
-            options=[{"label": k, "value": v} for k, v in API_ENDPOINTS.items()],
-            value=API_ENDPOINTS["Premarket Movers"],
-            clearable=False,
-            style={"width": "300px", "marginBottom": "20px"},
-        ),
-        
-        # Interval component set to fetch live data every 15 seconds (15,000 ms)
-        dcc.Interval(
-            id="interval-component",
-            interval=15_000,
-            n_intervals=0,
-        ),
-        
-        # Target container refreshed dynamically
-        html.Div(id="table-container"),
-    ],
-    style={"padding": "24px", "backgroundColor": "#0d1410", "minHeight": "100vh"},
-)
-
-
-@app.callback(
-    Output("table-container", "children"),
-    Input("interval-component", "n_intervals"),
-    Input("market-selector", "value"),
-)
-def update_table_automatically(n_intervals: int, selected_api_url: str):
-    df, error_msg = fetch_stock_top10(selected_api_url)
-
-    if error_msg:
-        return html.Div(
-            f"Error updating stock data: {error_msg}",
-            style={"color": "#ff6b6b", "fontFamily": "DM Sans, sans-serif"},
-        )
-
-    return build_table(
-        frame=df,
-        yellow_threshold=5.0,
-        orange_threshold=10.0,
-        red_threshold=20.0,
-    )
-
-
-if __name__ == "__main__":
-    app.run_server(debug=True)
