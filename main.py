@@ -1,304 +1,66 @@
-from __future__ import annotations
+import dash
+from dash import Input, Output, dcc, html
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+# Ensure PAGES is imported here from fishing
+from fishing import PAGES, build_table, fetch_stock_top10, scrape_stock_top10
 
-from dash import Dash, Input, Output, State, dcc, html
-
-from compare import clear_comparison_cache, compare_layout, render_comparison
-from fishing import API_ENDPOINTS, build_table, fetch_stock_top10
-from intraday import clear_caches, intraday_layout, render_intraday, render_sidebar_range
-from short_inspector import inspector_layout, render_inspector
-from stock_analyzer import clear_stock_history_cache, render_stock_analysis, stock_analyzer_layout
-
-DEFAULT_REFRESH_SECONDS = 30
-DEFAULT_YELLOW_THRESHOLD = 100.0
-DEFAULT_ORANGE_THRESHOLD = 150.0
-DEFAULT_RED_THRESHOLD = 200.0
-DEFAULT_TICKERS = ["TQQQ", "UPRO", "UDOW", "^VIX", "BNO"]
+app = dash.Dash(__name__)
+server = app.server  # Required for Gunicorn on Render
 
 
-def parse_tickers(raw_tickers: str | None) -> list[str]:
-    tickers = []
-    for ticker in (raw_tickers or "").replace("\n", ",").split(","):
-        cleaned = ticker.strip().upper()
-        if cleaned and cleaned not in tickers:
-            tickers.append(cleaned)
-    return tickers or DEFAULT_TICKERS.copy()
+def get_default_page():
+    return list(PAGES.keys())[0] if PAGES else ""
 
 
-def get_default_page_for(now: datetime) -> str:
-    if now.weekday() >= 5:
-        return "Top Daily Gainers"
-
-    premarket_start = now.replace(hour=4, minute=0, second=0, microsecond=0)
-    premarket_end = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    if premarket_start <= now < premarket_end:
-        return "Premarket Movers"
-    return "Top Daily Gainers"
-
-
-def get_default_page() -> str:
-    return get_default_page_for(datetime.now(ZoneInfo("America/New_York")))
-
-
-app = Dash(__name__, title="Market Intelligence")
-server = app.server
-
-
-def sidebar() -> html.Aside:
-    return html.Aside([
-        html.Div([
-            html.Div("MARKET INTELLIGENCE", className="eyebrow sidebar-eyebrow"),
-            html.Div("by Ken Harmon", className="sidebar-credit"),
-        ]),
-        html.Button("☰  Settings", id="sidebar-toggle", className="sidebar-toggle"),
-        html.Div([
-            html.Label("TICKER LIST", className="setting-label"),
-            dcc.Textarea(id="inspector-tickers", value=", ".join(DEFAULT_TICKERS), placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
-            html.Span("comma separated", className="setting-suffix"),
-            html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
-            html.Div([
-                html.Label("MARKET VIEW", className="setting-label"),
-                dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
-                html.Label("REFRESH INTERVAL", className="setting-label"),
-                dcc.Input(id="refresh-seconds", type="number", min=10, max=600, step=5, value=DEFAULT_REFRESH_SECONDS, className="sidebar-input"),
-                html.Span("seconds", className="setting-suffix"),
-                html.Label("YELLOW THRESHOLD", className="setting-label"),
-                dcc.Input(id="yellow-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_YELLOW_THRESHOLD, className="sidebar-input"),
-                html.Span("% gain", className="setting-suffix"),
-                html.Label("ORANGE THRESHOLD", className="setting-label"),
-                dcc.Input(id="orange-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_ORANGE_THRESHOLD, className="sidebar-input"),
-                html.Span("% gain", className="setting-suffix"),
-                html.Label("RED THRESHOLD", className="setting-label"),
-                dcc.Input(id="red-threshold", type="number", min=0, max=1000, step=5, value=DEFAULT_RED_THRESHOLD, className="sidebar-input"),
-                html.Span("% gain", className="setting-suffix"),
-            ], id="fishing-settings"),
-        ], id="sidebar-settings", className="sidebar-settings"),
-        html.Div([html.P("CURRENT PRICES & 60-DAY RANGE", className="eyebrow"), html.Div(id="intraday-sidebar-range")], id="intraday-sidebar-panel", className="intraday-sidebar-panel", style={"display": "none"}),
-        html.Div([html.P("ACTIVE APP", className="eyebrow"), html.P("Fishing", id="sidebar-app-name", className="source-name"), html.P("Top market gainers with live filters", id="sidebar-target-note", className="target-note")], className="sidebar-target"),
-    ], id="sidebar", className="sidebar")
-
-
-app.layout = html.Div([
-    sidebar(),
-    html.Main([
-        html.Div([
-            html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
-            html.Div([html.Div([html.H2("Fishing"), html.P("Top market gainers, surfaced at the top of the app.", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
-            html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
-            html.Footer(" is a market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
-            dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
-            dcc.Store(id="refresh-counter", data=0),
-        ], id="fishing-content"),
-        inspector_layout(DEFAULT_TICKERS),
-        intraday_layout(DEFAULT_TICKERS),
-        stock_analyzer_layout(DEFAULT_TICKERS),
-        compare_layout(DEFAULT_TICKERS),
-    ], id="main-content", className="main-content"),
-], className="app-shell")
-
-
-@app.callback(Output("sidebar", "className"), Input("sidebar-toggle", "n_clicks"), State("sidebar", "className"))
-def toggle_sidebar(_clicks: int | None, class_name: str) -> str:
-    if not _clicks:
-        return class_name
-    return "sidebar collapsed" if "collapsed" not in class_name else "sidebar"
-
-
-@app.callback(
-    Output("fishing-content", "style"),
-    Output("inspector-content", "style"),
-    Output("intraday-content", "style"),
-    Output("stock-analyzer-content", "style"),
-    Output("compare-content", "style"),
-    Output("sidebar-app-name", "children"),
-    Output("sidebar-target-note", "children"),
-    Output("fishing-settings", "style"),
-    Output("intraday-sidebar-panel", "style"),
-    Output("manual-refresh", "style"),
-    Input("app-select", "value"),
-)
-def switch_app(app_name: str):
-    inspector_active = app_name == "inspector"
-    intraday_active = app_name == "intraday"
-    stock_analyzer_active = app_name == "stock-analyzer"
-    compare_active = app_name == "compare"
-    return (
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
-        {} if inspector_active else {"display": "none"},
-        {} if intraday_active else {"display": "none"},
-        {} if stock_analyzer_active else {"display": "none"},
-        {} if compare_active else {"display": "none"},
-        "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
-        "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top market gainers with live filters",
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
-        {} if intraday_active else {"display": "none"},
-        {} if app_name == "fishing" else {"display": "none"},
+def sidebar():
+    return html.Div(
+        [
+            html.H2("Market Dash", className="sidebar-title"),
+            dcc.Dropdown(
+                id="page-select",
+                options=[{"label": name, "value": name} for name in PAGES],
+                value=get_default_page(),
+                clearable=False,
+                className="sidebar-control",
+            ),
+            dcc.Interval(
+                id="interval-component",
+                interval=15_000,  # Auto-refresh every 15 seconds
+                n_intervals=0,
+            ),
+        ],
+        className="sidebar",
     )
 
 
-@app.callback(
-    Output("inspector-ticker", "options"),
-    Output("inspector-ticker", "value"),
-    Output("intraday-ticker", "options"),
-    Output("intraday-ticker", "value"),
-    Output("stock-analyzer-ticker", "options"),
-    Output("stock-analyzer-ticker", "value"),
-    Output("compare-tickers", "options"),
-    Output("compare-tickers", "value"),
-    Input("inspector-tickers", "value"),
-    State("inspector-ticker", "value"),
-    State("intraday-ticker", "value"),
-    State("stock-analyzer-ticker", "value"),
-    State("compare-tickers", "value"),
+app.layout = html.Div(
+    [
+        sidebar(),
+        html.Div(id="page-content", className="content"),
+    ]
 )
-def update_inspector_tickers(
-    raw_tickers: str | None,
-    current_ticker: str | None,
-    current_intraday_ticker: str | None,
-    current_analyzer_ticker: str | None,
-    current_compare_tickers: list[str] | None,
-):
-    tickers = parse_tickers(raw_tickers)
-    options = [{"label": ticker, "value": ticker} for ticker in tickers]
-    inspector_value = current_ticker if current_ticker in tickers else tickers[0]
-    intraday_value = current_intraday_ticker if current_intraday_ticker in tickers else tickers[0]
-    analyzer_value = current_analyzer_ticker if current_analyzer_ticker in tickers else tickers[0]
-    compare_values = [ticker for ticker in (current_compare_tickers or []) if ticker in tickers]
-    if not compare_values:
-        compare_values = tickers[:7]
-    return options, inspector_value, options, intraday_value, options, analyzer_value, options, compare_values
 
 
 @app.callback(
-    Output("inspector-status", "children"),
-    Output("inspector-metrics", "children"),
-    Output("inspector-chart", "figure"),
-    Output("inspector-summary", "children"),
-    Output("inspector-technical", "children"),
-    Output("inspector-fundamentals", "children"),
-    Input("inspector-analyze", "n_clicks"),
-    State("inspector-ticker", "value"),
+    Output("page-content", "children"),
+    Input("page-select", "value"),
+    Input("interval-component", "n_intervals"),
 )
-def update_inspector(_clicks: int | None, symbol: str):
-    return render_inspector(symbol)
+def update_table(selected_page: str, n_intervals: int):
+    # Lookup URL from PAGES dict using the dropdown selection
+    target_url = PAGES.get(selected_page, get_default_page())
+    df, error_msg = fetch_stock_top10(target_url)
 
+    if error_msg:
+        return html.Div(f"Error fetching data: {error_msg}", className="error-message")
 
-@app.callback(
-    Output("intraday-status", "children"),
-    Output("intraday-metrics", "children"),
-    Output("intraday-stats", "children"),
-    Output("intraday-price", "figure"),
-    Output("intraday-volume", "figure"),
-    Output("intraday-data", "children"),
-    Input("intraday-refresh", "n_clicks"),
-    Input("intraday-ticker", "value"),
-)
-def update_intraday(_clicks: int | None, symbol: str):
-    return render_intraday(symbol, _clicks)
-
-
-@app.callback(
-    Output("stock-analyzer-status", "children"),
-    Output("stock-analyzer-metrics", "children"),
-    Output("stock-analyzer-price", "figure"),
-    Output("stock-analyzer-indicators", "figure"),
-    Output("stock-analyzer-statistics", "children"),
-    Output("stock-analyzer-data", "children"),
-    Input("stock-analyzer-refresh", "n_clicks"),
-    Input("stock-analyzer-ticker", "value"),
-    Input("stock-analyzer-dates", "start_date"),
-    Input("stock-analyzer-dates", "end_date"),
-    Input("stock-analyzer-dividends-only", "value"),
-)
-def update_stock_analyzer(
-    _clicks: int | None,
-    symbol: str | None,
-    start_date: str | None,
-    end_date: str | None,
-    filters: list[str] | None,
-):
-    from dash import ctx
-
-    if ctx.triggered_id == "stock-analyzer-refresh":
-        clear_stock_history_cache()
-    try:
-        return render_stock_analysis(
-            symbol,
-            start_date,
-            end_date,
-            dividends_only="dividends" in (filters or []),
-        )
-    except Exception as error:
-        return f"Error analyzing {symbol or 'ticker'}: {error}", [], {}, {}, [], html.Div()
-
-
-@app.callback(
-    Output("compare-status", "children"),
-    Output("compare-chart", "figure"),
-    Output("compare-table", "children"),
-    Input("compare-tickers", "value"),
-    Input("compare-horizon", "value"),
-    Input("compare-refresh", "n_clicks"),
-)
-def update_comparison(
-    symbols: list[str] | None,
-    horizon: str | None,
-    _clicks: int | None,
-):
-    from dash import ctx
-
-    if ctx.triggered_id == "compare-refresh":
-        clear_comparison_cache()
-    try:
-        return render_comparison(symbols, horizon)
-    except Exception as error:
-        figure = {}
-        return f"Error fetching comparison data: {error}", figure, html.Div()
-
-
-@app.callback(
-    Output("intraday-sidebar-range", "children"),
-    Input("app-select", "value"),
-    Input("inspector-tickers", "value"),
-    Input("intraday-refresh", "n_clicks"),
-    Input("intraday-ticker", "value"),
-)
-def update_intraday_sidebar(app_name: str, raw_tickers: str | None, _refresh: int | None, selected_ticker: str | None):
-    if app_name != "intraday":
-        return []
-    if _refresh is not None:
-        clear_caches()
-    tickers = parse_tickers(raw_tickers)
-    if selected_ticker and selected_ticker not in tickers:
-        tickers = [selected_ticker] + tickers
-    return render_sidebar_range(tickers)
-
-
-@app.callback(Output("auto-refresh", "interval"), Input("refresh-seconds", "value"))
-def update_refresh_interval(seconds: int | None) -> int:
-    return max(10, min(int(seconds or DEFAULT_REFRESH_SECONDS), 600)) * 1000
-
-
-@app.callback(
-    Output("refresh-summary", "children"), Output("table-heading", "children"), Output("status-message", "children"), Output("stock-table", "children"), Output("refresh-counter", "data"),
-    Input("page-select", "value"), Input("auto-refresh", "n_intervals"), Input("manual-refresh", "n_clicks"), Input("yellow-threshold", "value"), Input("orange-threshold", "value"), Input("red-threshold", "value"), State("refresh-counter", "data"), State("refresh-seconds", "value"),
-)
-def update_fishing(page_name: str, _intervals: int, _manual_clicks: int | None, yellow_threshold: float | None, orange_threshold: float | None, red_threshold: float | None, refresh_counter: int | None, refresh_seconds: int | None):
-    yellow = float(yellow_threshold if yellow_threshold is not None else DEFAULT_YELLOW_THRESHOLD)
-    orange = max(float(orange_threshold if orange_threshold is not None else DEFAULT_ORANGE_THRESHOLD), yellow)
-    red = max(float(red_threshold if red_threshold is not None else DEFAULT_RED_THRESHOLD), orange)
-    frame, error = scrape_stock_top10(PAGES.get(page_name, PAGES[get_default_page()]))
-    count = 0 if frame is None else len(frame)
-    counter = int(refresh_counter or 0) + 1
-    seconds = max(10, min(int(refresh_seconds or DEFAULT_REFRESH_SECONDS), 600))
-    now = datetime.now().astimezone().strftime("%b %d, %Y at %H:%M:%S %Z")
-    status = error or f"Showing {count} qualifying stocks"
-    table = build_table(frame, yellow, orange, red) if frame is not None else html.Div(error, className="error-state")
-    return f"{page_name} · Updated {now} · Every {seconds} sec · Refresh #{counter}", f"Top 10: {page_name}", status, table, counter
+    return build_table(
+        frame=df,
+        yellow_threshold=5.0,
+        orange_threshold=10.0,
+        red_threshold=20.0,
+    )
 
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=8050)
+    app.run_server(debug=True)
