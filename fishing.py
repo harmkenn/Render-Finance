@@ -7,6 +7,10 @@ import requests
 from dash import Input, Output, dcc, dash_table, html
 
 # Internal API endpoints for StockAnalysis market screeners
+PAGES = {
+    "Premarket Movers": "https://stockanalysis.com/api/screener/s/f?m=premarketGainers&s=volume-desc",
+    "Top Daily Gainers": "https://stockanalysis.com/api/screener/s/f?m=gainers&s=volume-desc",
+}
 API_ENDPOINTS = {
     "Premarket Movers": "https://stockanalysis.com/api/screener/s/f?m=premarketGainers&s=volume-desc",
     "Top Daily Gainers": "https://stockanalysis.com/api/screener/s/f?m=gainers&s=volume-desc",
