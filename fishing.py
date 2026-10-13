@@ -1,74 +1,15 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-import zoneinfo
-
-from bs4 import BeautifulSoup
-import dash
-from dash import dash_table, dcc, html, Input, Output
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
+from dash import dash_table, html
 
 PAGES = {
     "Premarket Movers": "https://stockanalysis.com/markets/premarket/",
     "Top Daily Gainers": "https://stockanalysis.com/markets/gainers/",
 }
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-
-
-def is_premarket_active() -> bool:
-    """Checks if current US Eastern time falls within active Premarket hours (Mon-Fri, 4:00 AM - 9:30 AM ET)."""
-    eastern = zoneinfo.ZoneInfo("America/New_York")
-    now = datetime.now(eastern)
-
-    # Weekdays only: Monday (0) through Friday (4)
-    if now.weekday() < 5:
-        premarket_start = now.replace(hour=4, minute=0, second=0, microsecond=0)
-        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        return premarket_start <= now < market_open
-
-    return False
-
-
-def get_active_market_url() -> str:
-    """Determines active URL based on US Eastern market session."""
-    if is_premarket_active():
-        return PAGES["Premarket Movers"]
-
-    # Default to Regular Market Gainers during regular session, after-hours, and weekends
-    return PAGES["Top Daily Gainers"]
-
-
-def fetch_nasdaq_price(symbol: str) -> str:
-    """Queries Nasdaq's JSON API directly for the live price of a given ticker symbol."""
-    clean_symbol = str(symbol).strip().lower()
-    url = f"https://api.nasdaq.com/api/quote/{clean_symbol}/info?assetclass=stocks"
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www.nasdaq.com",
-        "Referer": f"https://www.nasdaq.com/market-activity/stocks/{clean_symbol}",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=4)
-        if response.status_code == 200:
-            data = response.json()
-            primary_data = data.get("data", {}).get("primaryData", {})
-            last_price = primary_data.get("lastSalePrice")
-            if last_price:
-                return last_price
-    except Exception:
-        pass
-    return "N/A"
-
-
-def fetch_nasdaq_prices_parallel(symbols: list[str]) -> list[str]:
-    """Fetches prices for multiple tickers concurrently to keep response times fast."""
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        return list(executor.map(fetch_nasdaq_price, symbols))
 
 
 def parse_price(value: object) -> float:
@@ -91,140 +32,77 @@ def parse_volume(value: object) -> float:
         return 0.0
 
 
-def scrape_stock_top10(target: str | None = None) -> tuple[pd.DataFrame | None, str | None]:
-    """Scrapes stock data with flexible market routing, cache suppression, and schema mapping."""
-    if not target or str(target).strip().lower() in {"auto", "none"}:
-        url = get_active_market_url()
-    elif target in PAGES:
-        url = PAGES[target]
-    else:
-        url = str(target)
-
-    # Use cache-busting headers to prevent stale requests
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    }
-
+def scrape_stock_top10(url: str) -> tuple[pd.DataFrame | None, str | None]:
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
         response.raise_for_status()
         table = BeautifulSoup(response.text, "html.parser").find("table")
         if table is None:
             return None, "The source page did not contain a market table."
-
-        headers_list = [header.get_text(strip=True) for header in table.find_all("th")]
+        headers = [header.get_text(strip=True) for header in table.find_all("th")]
         rows = []
-        for table_row in table.find_all("tr")[1:30]:
+        for table_row in table.find_all("tr")[1:25]:
             cells = [cell.get_text(" ", strip=True) for cell in table_row.find_all("td")]
             if cells:
                 rows.append(cells)
-
         if not rows:
             return None, "No market rows were returned by the source page."
-
-        frame = pd.DataFrame(rows, columns=headers_list if headers_list and len(headers_list) == len(rows[0]) else None)
-
-        symbol_column = next((c for c in frame.columns if "symbol" in str(c).lower() or "ticker" in str(c).lower()), frame.columns[0])
-        price_column = next((c for c in frame.columns if "price" in str(c).lower()), None)
-        volume_column = next((c for c in frame.columns if "volume" in str(c).lower()), None)
-
+        frame = pd.DataFrame(rows, columns=headers if headers and len(headers) == len(rows[0]) else None)
+        price_column = next((column for column in frame.columns if "price" in str(column).lower()), None)
+        volume_column = next((column for column in frame.columns if "volume" in str(column).lower()), None)
         if price_column:
             frame = frame[frame[price_column].map(parse_price) >= 0.80]
         if volume_column:
             frame = frame[frame[volume_column].map(parse_volume) >= 1_000]
-
-        top_frame = frame.head(10).copy()
-        if top_frame.empty:
-            return None, "No stocks matched the price/volume filters."
-
-        top_frame["Nasdaq Quote"] = top_frame[symbol_column].astype(str).map(
-            lambda ticker: f"https://www.nasdaq.com/market-activity/stocks/{ticker.lower()}"
-        )
-
-        tickers = top_frame[symbol_column].astype(str).tolist()
-        top_frame["Nasdaq Price"] = fetch_nasdaq_prices_parallel(tickers)
-
-        cols = list(top_frame.columns)
-        if price_column and price_column in cols:
-            price_idx = cols.index(price_column)
-            cols.remove("Nasdaq Price")
-            cols.remove("Nasdaq Quote")
-            cols.insert(price_idx + 1, "Nasdaq Price")
-            cols.insert(price_idx + 2, "Nasdaq Quote")
-            top_frame = top_frame[cols]
-
-        return top_frame, None
+        return frame.head(10).copy(), None
     except requests.RequestException as error:
         return None, f"Could not reach StockAnalysis: {error}"
     except (ValueError, IndexError) as error:
         return None, f"Could not read the market table: {error}"
 
 
-def _change_column(frame: pd.DataFrame) -> str | None:
-    return next((str(col) for col in frame.columns if "%" in str(col) or "change" in str(col).lower()), None)
+def _change_column(frame: pd.DataFrame) -> object | None:
+    return next((column for column in frame.columns if "%" in str(column) or "change" in str(column).lower()), None)
 
 
-def build_table(
-    frame: pd.DataFrame | None,
-    yellow_threshold: float = 10.0,
-    orange_threshold: float = 20.0,
-    red_threshold: float = 30.0,
-) -> html.Div | dash_table.DataTable:
+def build_table(frame: pd.DataFrame | None, yellow_threshold: float, orange_threshold: float, red_threshold: float) -> html.Div | dash_table.DataTable:
     if frame is None or frame.empty:
         return html.Div("No stocks matched the current filters.", className="empty-state")
-
-    symbol_column = next((c for c in frame.columns if "symbol" in str(c).lower() or "ticker" in str(c).lower()), frame.columns[0])
+    symbol_column = next((column for column in frame.columns if "symbol" in str(column).lower() or "ticker" in str(column).lower()), frame.columns[0])
     change_column = _change_column(frame)
     rows = frame.copy()
-
-    rows["Ticker Raw"] = rows[symbol_column].astype(str)
-    rows["Ticker"] = rows["Ticker Raw"].map(lambda t: f"[{t}](https://stockanalysis.com/stocks/{t.lower()}/)")
-
-    if "Nasdaq Quote" in rows.columns:
-        rows["Nasdaq Link"] = rows["Nasdaq Quote"].map(lambda url: f"[Nasdaq Quote]({url})")
-        rows = rows.drop(columns=["Nasdaq Quote"])
-
-    rows = rows.drop(columns=[symbol_column, "Ticker Raw"], errors="ignore")
-
-    market_cap_column = next((c for c in rows.columns if "market cap" in str(c).lower()), None)
+    rows["Ticker"] = rows[symbol_column].astype(str)
+    rows["Ticker URL"] = rows["Ticker"].map(lambda ticker: f"https://stockanalysis.com/stocks/{ticker.lower()}/")
+    rows = rows.drop(columns=[symbol_column])
+    market_cap_column = next((column for column in rows.columns if "market cap" in str(column).lower()), None)
     if market_cap_column:
         rows = rows.drop(columns=[market_cap_column])
-
-    ordered = ["Ticker"] + [c for c in rows.columns if c not in {"Ticker", "Ticker URL"}]
+    ordered = ["Ticker"] + [column for column in rows.columns if column not in {"Ticker", "Ticker URL"}]
     data = rows[ordered].to_dict("records")
-    columns = [{"name": c, "id": c} for c in ordered]
-
-    for col in columns:
-        if col["id"] in {"Ticker", "Nasdaq Link"}:
-            col["presentation"] = "markdown"
-
+    for row in data:
+        ticker = row["Ticker"]
+        row["Ticker"] = f"[{ticker}]({rows.loc[rows['Ticker'] == ticker, 'Ticker URL'].iloc[0]})"
+    columns = [{"name": column, "id": column} for column in ordered]
+    columns[0]["presentation"] = "markdown"
     conditional = []
     if change_column:
-        for idx, (_, row) in enumerate(frame.iterrows()):
+        for index, row in frame.iterrows():
             try:
-                val = float(str(row[change_column]).replace("%", "").replace("+", "").replace(",", "").strip())
+                value = float(str(row[change_column]).replace("%", "").replace("+", "").replace(",", "").strip())
             except (TypeError, ValueError):
                 continue
-
-            if val >= red_threshold:
-                color, text_color = "#b22222", "white"
-            elif val >= orange_threshold:
-                color, text_color = "#ff7f0e", "white"
-            elif val >= yellow_threshold:
-                color, text_color = "#f4d03f", "#17221b"
+            if value >= red_threshold:
+                color = "#b22222"
+                text_color = "white"
+            elif value >= orange_threshold:
+                color = "#ff7f0e"
+                text_color = "white"
+            elif value >= yellow_threshold:
+                color = "#f4d03f"
+                text_color = "#17221b"
             else:
                 continue
-
-            conditional.append({
-                "if": {"row_index": idx},
-                "backgroundColor": color,
-                "color": text_color,
-                "fontWeight": "600",
-            })
-
+            conditional.append({"if": {"row_index": frame.index.get_loc(index)}, "backgroundColor": color, "color": text_color, "fontWeight": "600"})
     return dash_table.DataTable(
         data=data,
         columns=columns,
@@ -233,89 +111,7 @@ def build_table(
         page_action="none",
         style_as_list_view=True,
         style_table={"overflowX": "auto"},
-        style_header={
-            "backgroundColor": "#202f27",
-            "color": "#91a39a",
-            "fontWeight": "700",
-            "fontSize": "11px",
-            "textTransform": "uppercase",
-            "letterSpacing": "1px",
-            "border": "0",
-            "padding": "14px 12px",
-        },
-        style_cell={
-            "backgroundColor": "#17221d",
-            "color": "#e8f1eb",
-            "fontFamily": "DM Sans",
-            "fontSize": "13px",
-            "border": "0",
-            "borderTop": "1px solid #26362e",
-            "padding": "8px 12px",
-            "textAlign": "left",
-            "whiteSpace": "nowrap",
-        },
+        style_header={"backgroundColor": "#202f27", "color": "#91a39a", "fontWeight": "700", "fontSize": "11px", "textTransform": "uppercase", "letterSpacing": "1px", "border": "0", "padding": "14px 12px"},
+        style_cell={"backgroundColor": "#17221d", "color": "#e8f1eb", "fontFamily": "DM Sans", "fontSize": "13px", "border": "0", "borderTop": "1px solid #26362e", "padding": "8px 12px", "textAlign": "left", "whiteSpace": "nowrap"},
         style_data_conditional=conditional,
     )
-
-
-# --- DASH APP BOOTSTRAP ---
-app = dash.Dash(__name__)
-
-app.layout = html.Div([
-    html.H2("Live Market Top Movers", style={"color": "#e8f1eb", "fontFamily": "DM Sans"}),
-
-    html.Div([
-        html.Label("Select Market View: ", style={"color": "#91a39a", "marginRight": "10px"}),
-        dcc.Dropdown(
-            id="market-target-dropdown",
-            options=[
-                {"label": "Auto (Time Based)", "value": "Auto"},
-                {"label": "Premarket Movers", "value": "Premarket Movers"},
-                {"label": "Top Daily Gainers", "value": "Top Daily Gainers"},
-            ],
-            value="Auto",
-            clearable=False,
-            style={"width": "250px", "display": "inline-block", "color": "#000"},
-        ),
-        html.Span(id="last-updated-text", style={"color": "#91a39a", "marginLeft": "20px", "fontSize": "12px"}),
-    ], style={"marginBottom": "20px"}),
-
-    # Automatic 30-Second Refresh
-    dcc.Interval(
-        id="interval-component",
-        interval=30 * 1000,  # 30 seconds
-        n_intervals=0,
-    ),
-
-    # Container where table renders
-    html.Div(id="table-container"),
-], style={"padding": "20px", "backgroundColor": "#101814", "minHeight": "100vh"})
-
-
-# --- DASH REFRESH CALLBACK ---
-@app.callback(
-    [Output("table-container", "children"), Output("last-updated-text", "children")],
-    [Input("interval-component", "n_intervals"), Input("market-target-dropdown", "value")],
-)
-def update_table(n_intervals: int, selected_target: str):
-    frame, err = scrape_stock_top10(target=selected_target)
-
-    if err:
-        table_element = html.Div(err, style={"color": "#ff6b6b", "padding": "10px"})
-    else:
-        table_element = build_table(frame)
-
-    timestamp = datetime.now().strftime("%I:%M:%S %p")
-    
-    # Indicate premarket status in status bar if auto mode is selected
-    mode_status = ""
-    if selected_target == "Auto":
-        mode_status = " [Premarket Active]" if is_premarket_active() else " [Regular Session/Off-Hours Active]"
-
-    status_text = f"Last updated: {timestamp}{mode_status} (Refreshed {n_intervals} times)"
-
-    return table_element, status_text
-
-
-if __name__ == "__main__":
-    app.run_server(debug=True)
