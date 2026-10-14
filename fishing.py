@@ -6,8 +6,8 @@ from dash import dash_table, html
 
 # Pages mapped directly to TradingView's API scanner payloads
 PAGES = {
-    "Premarket Movers": "https://scanner.tradingview.com/america/scan",
-    "Top Daily Gainers": "https://scanner.tradingview.com/america/scan",
+    "Premarket Movers": "https://www.tradingview.com/markets/stocks-usa/market-movers-pre-market-gainers/",
+    "Top Daily Gainers": "https://www.tradingview.com/markets/stocks-usa/market-movers-gainers/",
 }
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
