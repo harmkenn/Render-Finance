@@ -76,6 +76,10 @@ def clear_intraday_caches() -> None:
     fetch_daily_histories.cache_clear()
 
 
+# Option 1 Alias: retain backward compatibility for `from intraday import clear_caches`
+clear_caches = clear_intraday_caches
+
+
 def clear_stock_history_cache() -> None:
     fetch_stock_history.cache_clear()
 
@@ -230,7 +234,7 @@ def render_sidebar_range(tickers: list[str]) -> list[html.Component]:
                     html.Span(f"({percent_change:+.2f}%)", className=f"intraday-sidebar-change {tone}"),
                 ], className="intraday-sidebar-line"),
                 html.Div(html.Div(className=f"intraday-sidebar-marker {tone}", style={"left": f"{position:.2f}%"}), className="intraday-sidebar-bar"),
-                html.Small(f"60-day range: ${low_60d:.2f} - ${high_60d:.2f}", className="intraday-sidebar-range"),
+                html.Small(f"60-day range: ${low_60d:.2f} -${high_60d:.2f}", className="intraday-sidebar-range"),
             ], className="intraday-sidebar-row"))
         except Exception as error:
             content.append(html.Div([html.Strong(ticker), html.Span(f"Error ({error})", className="intraday-sidebar-muted")], className="intraday-sidebar-row"))
@@ -241,7 +245,7 @@ def render_sidebar_range(tickers: list[str]) -> list[html.Component]:
 # LAYOUT DEFINITIONS
 # =============================================================================
 
-def intraday_tab_layout(tickers: list[str]) -> html.Div:
+def intraday_layout(tickers: list[str]) -> html.Div:
     ticker = tickers[0] if tickers else "TQQQ"
     return html.Div([
         html.Div([
@@ -285,7 +289,7 @@ def intraday_tab_layout(tickers: list[str]) -> html.Div:
     ], id="intraday-content")
 
 
-def stock_analyzer_tab_layout(tickers: list[str]) -> html.Div:
+def stock_analyzer_layout(tickers: list[str]) -> html.Div:
     today = date.today()
     start = today - timedelta(days=5 * 365)
     ticker = tickers[0] if tickers else "TQQQ"
@@ -363,7 +367,7 @@ def main_layout(tickers: list[str] | None = None) -> html.Div:
 
 def render_intraday(symbol: str, refresh: int | None = None):
     if refresh is not None:
-        clear_intraday_caches()
+        clear_caches()
     symbol = (symbol or "TQQQ").strip().upper()
     try:
         history = _as_eastern(fetch_history(symbol))
@@ -554,6 +558,8 @@ def render_stock_analysis(
 DEFAULT_TICKERS = ["TQQQ", "AAPL", "MSFT", "NVDA", "SPY"]
 
 app = Dash(__name__)
+server = app.server  # WSGI server entry point for Gunicorn / Render
+
 app.layout = main_layout(DEFAULT_TICKERS)
 
 
@@ -563,9 +569,9 @@ app.layout = main_layout(DEFAULT_TICKERS)
 )
 def render_tab_content(tab: str):
     if tab == "intraday-tab":
-        return intraday_tab_layout(DEFAULT_TICKERS)
+        return intraday_layout(DEFAULT_TICKERS)
     elif tab == "stock-analyzer-tab":
-        return stock_analyzer_tab_layout(DEFAULT_TICKERS)
+        return stock_analyzer_layout(DEFAULT_TICKERS)
     return html.Div("Tab not found.")
 
 
