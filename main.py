@@ -58,7 +58,7 @@ def sidebar() -> html.Aside:
             dcc.Textarea(id="inspector-tickers", value=", ".join(DEFAULT_TICKERS), placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
             html.Span("comma separated", className="setting-suffix"),
             html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Intraday + Stock analyzer", "value": "intraday-stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
             html.Div([
                 html.Label("MARKET VIEW", className="setting-label"),
                 dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
@@ -124,17 +124,18 @@ def switch_app(app_name: str):
     inspector_active = app_name == "inspector"
     intraday_active = app_name == "intraday"
     stock_analyzer_active = app_name == "stock-analyzer"
+    combined_active = app_name == "intraday-stock-analyzer"
     compare_active = app_name == "compare"
     return (
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
+        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or combined_active or compare_active else {},
         {} if inspector_active else {"display": "none"},
-        {} if intraday_active else {"display": "none"},
-        {} if stock_analyzer_active else {"display": "none"},
+        {} if intraday_active or combined_active else {"display": "none"},
+        {} if stock_analyzer_active or combined_active else {"display": "none"},
         {} if compare_active else {"display": "none"},
-        "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
-        "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top market gainers with live filters",
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or compare_active else {},
-        {} if intraday_active else {"display": "none"},
+        "Intraday + Stock Analyzer" if combined_active else "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
+        "Intraday price action and historical analysis in one view" if combined_active else "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top market gainers with live filters",
+        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or combined_active or compare_active else {},
+        {} if intraday_active or combined_active else {"display": "none"},
         {} if app_name == "fishing" else {"display": "none"},
     )
 
