@@ -276,16 +276,6 @@ def intraday_layout(tickers: list[str]) -> html.Div:
                 dcc.Graph(id="intraday-price", config={"displayModeBar": False}),
             ], className="surface intraday-chart"),
         ], className="intraday-top-grid"),
-        html.Section([
-            dcc.Graph(id="intraday-volume", config={"displayModeBar": False}),
-        ], className="surface intraday-chart"),
-        html.Section([
-            html.Div([
-                html.H3("Recent observations"),
-                html.Span("Newest first", className="section-caption"),
-            ], className="chart-heading"),
-            html.Div(id="intraday-data"),
-        ], className="surface intraday-data-section"),
     ], id="intraday-content")
 
 
@@ -373,7 +363,7 @@ def render_intraday(symbol: str, refresh: int | None = None):
         history = _as_eastern(fetch_history(symbol))
         daily = fetch_daily_histories((symbol,))
         if history.empty:
-            return f"No data found for {symbol}. Check the symbol and try again.", [], html.Div(), {}, {}, html.Div()
+            return f"No data found for {symbol}. Check the symbol and try again.", [], html.Div(), {}
 
         latest_price = float(history["Close"].iloc[-1])
         regular_hours = history.between_time("09:30", "16:00")
@@ -383,31 +373,10 @@ def render_intraday(symbol: str, refresh: int | None = None):
         percent_diff = price_diff / last_close * 100 if last_close else 0
         tone = "positive" if percent_diff >= 0 else "negative"
 
-        recent_rows = history[["Close", "Volume"]].iloc[::-1].reset_index()
-        recent_rows["Datetime"] = recent_rows.iloc[:, 0].dt.strftime("%Y-%m-%d %H:%M")
-        recent_rows = recent_rows[["Datetime", "Close", "Volume"]].head(250)
-        recent_rows["Close"] = recent_rows["Close"].map(lambda value: f"${value:,.2f}")
-        recent_rows["Volume"] = recent_rows["Volume"].map(lambda value: f"{int(value):,}")
-        table = dash_table.DataTable(
-            data=recent_rows.to_dict("records"),
-            columns=[{"name": name, "id": name} for name in recent_rows.columns],
-            page_size=20,
-            sort_action="native",
-            style_table={"overflowX": "auto"},
-            style_header={"fontWeight": "600", "color": "#91a39a", "backgroundColor": "#202f27", "border": "0"},
-            style_cell={"backgroundColor": "#17221d", "color": "#e8f1eb", "border": "0", "padding": "8px 10px", "fontSize": "11px", "textAlign": "right"},
-            style_cell_conditional=[{"if": {"column_id": "Datetime"}, "textAlign": "left"}],
-        )
-
         price_figure = go.Figure()
         add_market_hours_shading(price_figure, history)
         price_figure.add_trace(go.Scatter(x=history.index, y=history["Close"], mode="lines", name="Price", line={"color": "#9cddbe", "width": 1.8}))
         price_figure.update_layout(template="plotly_dark", title=f"{symbol} intraday price", height=430, margin={"l": 20, "r": 20, "t": 45, "b": 20}, hovermode="x unified", xaxis_title="US/Eastern", yaxis_title="Price ($)")
-
-        volume_figure = go.Figure()
-        add_market_hours_shading(volume_figure, history)
-        volume_figure.add_trace(go.Bar(x=history.index, y=history["Volume"], name="Volume", marker_color="#91a39a"))
-        volume_figure.update_layout(template="plotly_dark", title=f"{symbol} intraday volume", height=300, margin={"l": 20, "r": 20, "t": 45, "b": 20}, hovermode="x unified", xaxis_title="US/Eastern", yaxis_title="Volume")
 
         metrics = [
             _metric("Latest price", f"${latest_price:,.2f}", css_prefix="intraday"),
@@ -415,9 +384,9 @@ def render_intraday(symbol: str, refresh: int | None = None):
             _metric("Change", f"{price_diff:+.2f} ({percent_diff:+.2f}%)", tone, css_prefix="intraday"),
             _metric("Bars loaded", f"{len(history):,}", css_prefix="intraday"),
         ]
-        return f"{symbol} · Updated through {history.index[-1].strftime('%Y-%m-%d %H:%M %Z')}", metrics, _stats_table(daily, symbol), price_figure, volume_figure, table
+        return f"{symbol} · Updated through {history.index[-1].strftime('%Y-%m-%d %H:%M %Z')}", metrics, _stats_table(daily, symbol), price_figure
     except Exception as error:
-        return f"Error fetching {symbol}: {error}", [], html.Div(), {}, {}, html.Div()
+        return f"Error fetching {symbol}: {error}", [], html.Div(), {}
 
 
 def render_stock_analysis(
@@ -581,8 +550,6 @@ def render_tab_content(tab: str):
         Output("intraday-metrics", "children"),
         Output("intraday-stats", "children"),
         Output("intraday-price", "figure"),
-        Output("intraday-volume", "figure"),
-        Output("intraday-data", "children"),
     ],
     [
         Input("intraday-refresh", "n_clicks"),

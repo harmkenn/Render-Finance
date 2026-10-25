@@ -192,8 +192,6 @@ def update_inspector(_clicks: int | None, symbol: str):
     Output("intraday-metrics", "children"),
     Output("intraday-stats", "children"),
     Output("intraday-price", "figure"),
-    Output("intraday-volume", "figure"),
-    Output("intraday-data", "children"),
     Input("intraday-refresh", "n_clicks"),
     Input("intraday-ticker", "value"),
 )
