@@ -1,6 +1,6 @@
 # Luma Market Tracker
 
-A modular Plotly Dash market tracker. `main.py` owns the collapsible settings sidebar and app frame. The sub applications include the Premarket Movers and Top Daily Gainers tracker, a parabolic short inspector, an intraday tape, a daily stock analyzer with technical indicators and dividend history, and a normalized-price comparison app. The ticker-based sub-app selections use the shared sidebar ticker list.
+A modular Plotly Dash market tracker. `main.py` owns the collapsible settings sidebar and app frame. The sub applications include separate Premarket and Open Market (Top Daily Gainers) trackers, a parabolic short inspector, an intraday tape, a daily stock analyzer with technical indicators and dividend history, and a normalized-price comparison app. The ticker-based sub-app selections use the shared sidebar ticker list.
 
 ## Run locally
 
@@ -13,7 +13,7 @@ python app.py
 
 Open http://127.0.0.1:8050.
 
-The live source is fetched when the page loads and every configured refresh interval. The default market view follows US Eastern time: Top Daily Gainers during weekday market hours, otherwise Premarket Movers.
+The live source is fetched when the selected market app loads and every configured refresh interval. The default market app follows US Eastern time: Premarket from 4:00 a.m. up to (but not including) 9:30 a.m., otherwise Open Market.
 
 ## Deploy on Render
 

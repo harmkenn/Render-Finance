@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from dash import Dash, Input, Output, State, dcc, html
+from dash import Dash, Input, Output, State, dcc, html, no_update
 
 from compare import clear_comparison_cache, compare_layout, render_comparison
 from fishing import PAGES, build_table, scrape_stock_top10
@@ -16,6 +16,7 @@ DEFAULT_YELLOW_THRESHOLD = 100.0
 DEFAULT_ORANGE_THRESHOLD = 150.0
 DEFAULT_RED_THRESHOLD = 200.0
 DEFAULT_TICKERS = ["TQQQ", "UPRO", "UDOW", "^VIX", "BNO"]
+MARKET_APP_PAGES = {"premarket": "Premarket Movers", "open-market": "Top Daily Gainers"}
 
 
 def parse_tickers(raw_tickers: str | None) -> list[str]:
@@ -28,9 +29,6 @@ def parse_tickers(raw_tickers: str | None) -> list[str]:
 
 
 def get_default_page_for(now: datetime) -> str:
-    if now.weekday() >= 5:
-        return "Top Daily Gainers"
-
     premarket_start = now.replace(hour=4, minute=0, second=0, microsecond=0)
     premarket_end = now.replace(hour=9, minute=30, second=0, microsecond=0)
     if premarket_start <= now < premarket_end:
@@ -40,6 +38,14 @@ def get_default_page_for(now: datetime) -> str:
 
 def get_default_page() -> str:
     return get_default_page_for(datetime.now(ZoneInfo("America/New_York")))
+
+
+def get_default_market_app_for(now: datetime) -> str:
+    return "premarket" if get_default_page_for(now) == "Premarket Movers" else "open-market"
+
+
+def get_default_market_app() -> str:
+    return get_default_market_app_for(datetime.now(ZoneInfo("America/New_York")))
 
 
 app = Dash(__name__, title="Market Intelligence")
@@ -58,10 +64,8 @@ def sidebar() -> html.Aside:
             dcc.Textarea(id="inspector-tickers", value=", ".join(DEFAULT_TICKERS), placeholder="TQQQ, UPRO, ^VIX", className="sidebar-input ticker-input"),
             html.Span("comma separated", className="setting-suffix"),
             html.Label("APPLICATION", className="setting-label"),
-            dcc.RadioItems(id="app-select", options=[{"label": "Fishing · Market tracker", "value": "fishing"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Intraday + Stock analyzer", "value": "intraday-stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value="fishing", className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
+            dcc.RadioItems(id="app-select", options=[{"label": "Premarket", "value": "premarket"}, {"label": "Open Market", "value": "open-market"}, {"label": "Parabolic short inspector", "value": "inspector"}, {"label": "Intraday tape", "value": "intraday"}, {"label": "Stock analyzer", "value": "stock-analyzer"}, {"label": "Intraday + Stock analyzer", "value": "intraday-stock-analyzer"}, {"label": "Compare · Normalized prices", "value": "compare"}], value=get_default_market_app(), className="sidebar-control sidebar-radio", inputClassName="sidebar-radio-input", labelClassName="sidebar-radio-label"),
             html.Div([
-                html.Label("MARKET VIEW", className="setting-label"),
-                dcc.Dropdown(id="page-select", options=[{"label": name, "value": name} for name in PAGES], value=get_default_page(), clearable=False, className="sidebar-control"),
                 html.Label("REFRESH INTERVAL", className="setting-label"),
                 dcc.Input(id="refresh-seconds", type="number", min=10, max=600, step=5, value=DEFAULT_REFRESH_SECONDS, className="sidebar-input"),
                 html.Span("seconds", className="setting-suffix"),
@@ -86,9 +90,9 @@ app.layout = html.Div([
     html.Main([
         html.Div([
             html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
-            html.Div([html.Div([html.H2("Fishing"), html.P("Top market gainers, surfaced at the top of the app.", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
+            html.Div([html.Div([html.H2("Market Movers", id="market-app-title"), html.P("Track premarket movers and open-market gainers.", id="market-app-intro", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
             html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
-            html.Footer(" is a market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
+            html.Footer("Market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
             dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
             dcc.Store(id="refresh-counter", data=0),
         ], id="fishing-content"),
@@ -121,22 +125,23 @@ def toggle_sidebar(_clicks: int | None, class_name: str) -> str:
     Input("app-select", "value"),
 )
 def switch_app(app_name: str):
+    market_active = app_name in {"premarket", "open-market"}
     inspector_active = app_name == "inspector"
     intraday_active = app_name == "intraday"
     stock_analyzer_active = app_name == "stock-analyzer"
     combined_active = app_name == "intraday-stock-analyzer"
     compare_active = app_name == "compare"
     return (
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or combined_active or compare_active else {},
+        {} if market_active else {"display": "none"},
         {} if inspector_active else {"display": "none"},
         {} if intraday_active or combined_active else {"display": "none"},
         {} if stock_analyzer_active or combined_active else {"display": "none"},
         {} if compare_active else {"display": "none"},
-        "Intraday + Stock Analyzer" if combined_active else "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Fishing",
-        "Intraday price action and historical analysis in one view" if combined_active else "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top market gainers with live filters",
-        {"display": "none"} if inspector_active or intraday_active or stock_analyzer_active or combined_active or compare_active else {},
+        "Intraday + Stock Analyzer" if combined_active else "Compare" if compare_active else "Stock Analyzer" if stock_analyzer_active else "Intraday Tape" if intraday_active else "Parabolic Inspector" if inspector_active else "Open Market" if app_name == "open-market" else "Premarket",
+        "Intraday price action and historical analysis in one view" if combined_active else "Compare normalized price performance across tickers" if compare_active else "Historical daily prices, dividends, and technical indicators" if stock_analyzer_active else "Premarket and after-hours price action" if intraday_active else "Intraday spikes, borrow risk, and short fundamentals" if inspector_active else "Top daily gainers with live filters" if app_name == "open-market" else "Premarket movers with live filters",
+        {} if market_active else {"display": "none"},
         {} if intraday_active or combined_active else {"display": "none"},
-        {} if app_name == "fishing" else {"display": "none"},
+        {} if market_active else {"display": "none"},
     )
 
 
@@ -282,21 +287,27 @@ def update_refresh_interval(seconds: int | None) -> int:
 
 
 @app.callback(
-    Output("refresh-summary", "children"), Output("table-heading", "children"), Output("status-message", "children"), Output("stock-table", "children"), Output("refresh-counter", "data"),
-    Input("page-select", "value"), Input("auto-refresh", "n_intervals"), Input("manual-refresh", "n_clicks"), Input("yellow-threshold", "value"), Input("orange-threshold", "value"), Input("red-threshold", "value"), State("refresh-counter", "data"), State("refresh-seconds", "value"),
+    Output("market-app-title", "children"), Output("market-app-intro", "children"), Output("refresh-summary", "children"), Output("table-heading", "children"), Output("status-message", "children"), Output("stock-table", "children"), Output("refresh-counter", "data"),
+    Input("app-select", "value"), Input("auto-refresh", "n_intervals"), Input("manual-refresh", "n_clicks"), Input("yellow-threshold", "value"), Input("orange-threshold", "value"), Input("red-threshold", "value"), State("refresh-counter", "data"), State("refresh-seconds", "value"),
 )
-def update_fishing(page_name: str, _intervals: int, _manual_clicks: int | None, yellow_threshold: float | None, orange_threshold: float | None, red_threshold: float | None, refresh_counter: int | None, refresh_seconds: int | None):
+def update_fishing(app_name: str, _intervals: int, _manual_clicks: int | None, yellow_threshold: float | None, orange_threshold: float | None, red_threshold: float | None, refresh_counter: int | None, refresh_seconds: int | None):
+    if app_name not in MARKET_APP_PAGES:
+        return (no_update,) * 7
+
+    page_name = MARKET_APP_PAGES[app_name]
     yellow = float(yellow_threshold if yellow_threshold is not None else DEFAULT_YELLOW_THRESHOLD)
     orange = max(float(orange_threshold if orange_threshold is not None else DEFAULT_ORANGE_THRESHOLD), yellow)
     red = max(float(red_threshold if red_threshold is not None else DEFAULT_RED_THRESHOLD), orange)
-    frame, error = scrape_stock_top10(PAGES.get(page_name, PAGES[get_default_page()]))
+    frame, error = scrape_stock_top10(PAGES[page_name])
     count = 0 if frame is None else len(frame)
     counter = int(refresh_counter or 0) + 1
     seconds = max(10, min(int(refresh_seconds or DEFAULT_REFRESH_SECONDS), 600))
     now = datetime.now().astimezone().strftime("%b %d, %Y at %H:%M:%S %Z")
     status = error or f"Showing {count} qualifying stocks"
     table = build_table(frame, yellow, orange, red) if frame is not None else html.Div(error, className="error-state")
-    return f"{page_name} · Updated {now} · Every {seconds} sec · Refresh #{counter}", f"Top 10: {page_name}", status, table, counter
+    title = "Premarket" if app_name == "premarket" else "Open Market"
+    intro = "Pre-market movers with live filters." if app_name == "premarket" else "Top daily gainers with live filters."
+    return title, intro, f"{page_name} · Updated {now} · Every {seconds} sec · Refresh #{counter}", f"Top 10: {page_name}", status, table, counter
 
 
 if __name__ == "__main__":
