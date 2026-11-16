@@ -13,7 +13,7 @@ python app.py
 
 Open http://127.0.0.1:8050.
 
-The live source is fetched when the selected market app loads and every configured refresh interval. The default market app follows US Eastern time: Premarket from 4:00 a.m. up to (but not including) 9:30 a.m., otherwise Open Market.
+The live source is fetched when the selected market app loads and every configured refresh interval. The initial app selection is recalculated on each page load using US Eastern time: Premarket from 4:00 a.m. until 9:30 a.m., and Open Market during open-market hours (9:30 a.m. to 8:00 p.m.). Open Market remains the default at other times.
 
 ## Deploy on Render
 

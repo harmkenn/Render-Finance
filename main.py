@@ -85,23 +85,27 @@ def sidebar() -> html.Aside:
     ], id="sidebar", className="sidebar")
 
 
-app.layout = html.Div([
-    sidebar(),
-    html.Main([
-        html.Div([
-            html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
-            html.Div([html.Div([html.H2("Market Movers", id="market-app-title"), html.P("Track premarket movers and open-market gainers.", id="market-app-intro", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
-            html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
-            html.Footer("Market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
-            dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
-            dcc.Store(id="refresh-counter", data=0),
-        ], id="fishing-content"),
-        inspector_layout(DEFAULT_TICKERS),
-        intraday_layout(DEFAULT_TICKERS),
-        stock_analyzer_layout(DEFAULT_TICKERS),
-        compare_layout(DEFAULT_TICKERS),
-    ], id="main-content", className="main-content"),
-], className="app-shell")
+def serve_layout() -> html.Div:
+    return html.Div([
+        sidebar(),
+        html.Main([
+            html.Div([
+                html.Header([html.Div([html.P("LIVE MARKET MONITOR", className="eyebrow")]), html.Div([html.Span("● Live", className="live-status"), html.Button("↻ Refresh now", id="manual-refresh", className="add-button")], className="header-actions")], className="topbar"),
+                html.Div([html.Div([html.H2("Market Movers", id="market-app-title"), html.P("Track premarket movers and open-market gainers.", id="market-app-intro", className="intro-copy")]), html.Div(id="refresh-summary", className="section-caption")], className="section-header"),
+                html.Section([html.Div([html.Div([html.H3(id="table-heading"), html.Span("Click a ticker to open its StockAnalysis page.", className="section-caption")], className="chart-heading"), html.Div(id="status-message", className="status-message")], className="table-heading"), html.Div(id="stock-table", className="table-wrap")], className="surface activity-surface"),
+                html.Footer("Market research demo. Data is fetched from StockAnalysis.com and is not investment advice.", className="footer"),
+                dcc.Interval(id="auto-refresh", interval=DEFAULT_REFRESH_SECONDS * 1000, n_intervals=0),
+                dcc.Store(id="refresh-counter", data=0),
+            ], id="fishing-content"),
+            inspector_layout(DEFAULT_TICKERS),
+            intraday_layout(DEFAULT_TICKERS),
+            stock_analyzer_layout(DEFAULT_TICKERS),
+            compare_layout(DEFAULT_TICKERS),
+        ], id="main-content", className="main-content"),
+    ], className="app-shell")
+
+
+app.layout = serve_layout
 
 
 @app.callback(Output("sidebar", "className"), Input("sidebar-toggle", "n_clicks"), State("sidebar", "className"))
