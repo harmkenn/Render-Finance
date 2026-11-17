@@ -11,7 +11,7 @@ from intraday import clear_caches, intraday_layout, render_intraday, render_side
 from short_inspector import inspector_layout, render_inspector
 from stock_analyzer import clear_stock_history_cache, render_stock_analysis, stock_analyzer_layout
 
-DEFAULT_REFRESH_SECONDS = 30
+DEFAULT_REFRESH_SECONDS = 10
 DEFAULT_YELLOW_THRESHOLD = 100.0
 DEFAULT_ORANGE_THRESHOLD = 150.0
 DEFAULT_RED_THRESHOLD = 200.0
