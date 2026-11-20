@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from dash import Dash, Input, Output, State, dcc, html, no_update
+from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
 
 from compare import clear_comparison_cache, compare_layout, render_comparison
 from fishing import PAGES, build_table, scrape_stock_top10
@@ -203,9 +203,11 @@ def update_inspector(_clicks: int | None, symbol: str):
     Output("intraday-price", "figure"),
     Input("intraday-refresh", "n_clicks"),
     Input("intraday-ticker", "value"),
+    Input("intraday-range", "value"),
 )
-def update_intraday(_clicks: int | None, symbol: str):
-    return render_intraday(symbol, _clicks)
+def update_intraday(_clicks: int | None, symbol: str, time_range: str):
+    refresh = _clicks if ctx.triggered_id == "intraday-refresh" else None
+    return render_intraday(symbol, refresh=refresh, time_range=time_range)
 
 
 @app.callback(

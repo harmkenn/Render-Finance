@@ -8,7 +8,7 @@ from functools import lru_cache
 import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
-from dash import Dash, Input, Output, State, dash_table, dcc, html
+from dash import Dash, Input, Output, State, ctx, dash_table, dcc, html
 
 # =============================================================================
 # CONSTANTS & GLOBAL RATE LIMITING
@@ -260,6 +260,19 @@ def intraday_layout(tickers: list[str]) -> html.Div:
                 clearable=False,
                 className="intraday-ticker",
             ),
+            html.Div([
+                html.Span("Range", className="intraday-range-label"),
+                dcc.RadioItems(
+                    id="intraday-range",
+                    options=[
+                        {"label": "10 Days", "value": "10d"},
+                        {"label": "24 Hours", "value": "1d"},
+                    ],
+                    value="10d",
+                    inline=True,
+                    className="intraday-range",
+                ),
+            ], className="intraday-range-control"),
             html.Button("Refresh chart", id="intraday-refresh", className="add-button"),
         ], className="intraday-controls"),
         html.Div(id="intraday-status", className="status-message"),
@@ -355,12 +368,18 @@ def main_layout(tickers: list[str] | None = None) -> html.Div:
 # RENDER LOGIC
 # =============================================================================
 
-def render_intraday(symbol: str, refresh: int | None = None):
+def render_intraday(
+    symbol: str,
+    refresh: int | None = None,
+    time_range: str = "10d",
+):
     if refresh is not None:
         clear_caches()
     symbol = (symbol or "TQQQ").strip().upper()
+    if time_range not in {"10d", "1d"}:
+        return f"Unsupported chart range: {time_range}", [], html.Div(), _empty_figure()
     try:
-        history = _as_eastern(fetch_history(symbol))
+        history = _as_eastern(fetch_history(symbol, period=time_range, interval="5m"))
         daily = fetch_daily_histories((symbol,))
         if history.empty:
             return f"No data found for {symbol}. Check the symbol and try again.", [], html.Div(), {}
@@ -376,7 +395,8 @@ def render_intraday(symbol: str, refresh: int | None = None):
         price_figure = go.Figure()
         add_market_hours_shading(price_figure, history)
         price_figure.add_trace(go.Scatter(x=history.index, y=history["Close"], mode="lines", name="Price", line={"color": "#9cddbe", "width": 1.8}))
-        price_figure.update_layout(template="plotly_dark", title=f"{symbol} intraday price", height=430, margin={"l": 20, "r": 20, "t": 45, "b": 20}, hovermode="x unified", xaxis_title="US/Eastern", yaxis_title="Price ($)")
+        range_label = "10 days" if time_range == "10d" else "24 hours"
+        price_figure.update_layout(template="plotly_dark", title=f"{symbol} intraday price · {range_label}", height=430, margin={"l": 20, "r": 20, "t": 45, "b": 20}, hovermode="x unified", xaxis_title="US/Eastern", yaxis_title="Price ($)")
 
         metrics = [
             _metric("Latest price", f"${latest_price:,.2f}", css_prefix="intraday"),
@@ -554,11 +574,13 @@ def render_tab_content(tab: str):
     [
         Input("intraday-refresh", "n_clicks"),
         Input("intraday-ticker", "value"),
+        Input("intraday-range", "value"),
     ],
     prevent_initial_call=False,
 )
-def update_intraday(n_clicks: int | None, ticker: str):
-    return render_intraday(ticker, refresh=n_clicks)
+def update_intraday(n_clicks: int | None, ticker: str, time_range: str):
+    refresh = n_clicks if ctx.triggered_id == "intraday-refresh" else None
+    return render_intraday(ticker, refresh=refresh, time_range=time_range)
 
 
 @app.callback(
